@@ -349,7 +349,7 @@ bool splitHorizontalEdge(CornerStitch* anchor, long y, long x0, long x1) {
 }
 
 // Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
-bool insertTileRect_edgewalk(CornerStitch* anchor,
+bool insertTileRect(CornerStitch* anchor,
                              long lx, long ly, long wx, long wy,
                              unsigned int attr = 0, unsigned int net = 0)
 {
@@ -583,6 +583,63 @@ bool deleteTileAndCoalesce(CornerStitch* anchor, CornerStitch* t) {
     return true;
 }
 
+bool deleteRectAndCoalesce(CornerStitch* anchor, long lx, long ly, long wx, long wy) {
+    if (!anchor) return false;
+    auto list = tilesInRect(anchor, lx, ly, wx, wy);
+    if (list.empty()) return false;
+    for (auto tt : list) {
+        if (!tt) continue;
+        if (tt->getllx() >= lx && tt->getlly() >= ly &&
+            tt->geturx() <= lx + wx && tt->getury() <= ly + wy) {
+            tt->setSpace(1);
+        }
+    }
+    coalesceAfterDeletion(anchor, 50);
+    return true;
+}
+
+
+
+bool moveTile(
+    CornerStitch* root,
+    CornerStitch* tile,
+    long dx,
+    long dy
+) {
+    if (!root || !tile) return false;
+    if (tile->isSpace()) return false;  // only move filled tiles
+
+   
+    long old_lx = tile->getllx();
+    long old_ly = tile->getlly();
+    long wx = tile->geturx() - tile->getllx();
+    long wy = tile->getury() - tile->getlly();
+
+    long new_lx = old_lx + dx;
+    long new_ly = old_ly + dy;
+
+  
+    auto destTiles = tilesInRect(root, new_lx, new_ly, wx, wy);
+    for (auto t : destTiles) {
+        // allow overlap with itself (important!)
+        if (!t->isSpace() && t != tile)
+            return false;
+    }
+
+    // 3. Delete old tile (edge-walk delete)
+    if (!deleteRectAndCoalesce(root, old_lx, old_ly, wx, wy))
+        return false;
+
+    // 4. Insert at new location
+    if (!insertTileRect(root, new_lx, new_ly, wx, wy,
+                        tile->getAttr(), tile->getNet()))
+        return false;
+
+    return true;
+}
+
+
+
 void exportTiles(CornerStitch* anchor) {
     if (!anchor) { cout << "[]\n"; return; }
 
@@ -652,24 +709,22 @@ int main() {
     long wx = 40;   // width
     long wy = 40;   // height
 
-    bool ok = insertTileRect_edgewalk(root, lx, ly, wx, wy, /*attr=*/1, /*net=*/0);
-    bool ok1 = insertTileRect_edgewalk(root, lx + 60, ly + 10, wx, 3*wy, /*attr=*/1, /*net=*/0);
+    bool ok = insertTileRect(root, lx, ly, wx, wy, /*attr=*/1, /*net=*/0);
+    bool ok1 = insertTileRect(root, lx + 60, ly + 10, wx, 3*wy, /*attr=*/1, /*net=*/0);
 
     cout << "Insert result: " << (ok & ok1 ? "SUCCESS" : "FAIL") << "\n";
     exportTiles(root);
     CornerStitch* tileToDelete = findTileContaining(root,100,100);
     bool d = deleteTileAndCoalesce(root, tileToDelete);
     cout << "deleteTileAndCoalesce -> " << (d ? "SUCCESS" : "FAIL") << "\n";
-
-    tileToDelete = findTileContaining(root,110,55);
-    d = deleteTileAndCoalesce(root, tileToDelete);
-    cout << "deleteTileAndCoalesce -> " << (d ? "SUCCESS" : "FAIL") << "\n";
-
-    tileToDelete = findTileContaining(root,305,55);
-    d = deleteTileAndCoalesce(root, tileToDelete);
-    cout << "deleteTileAndCoalesce -> " << (d ? "SUCCESS" : "FAIL") << "\n";
     exportTiles(root);
 
+    CornerStitch* T6 = findTileContaining(root, 100, 60); // inside T6
+
+    bool moved = moveTile(root, T6, 100, 10); // move right + up
+    cout << "Move T6 -> " << (moved ? "SUCCESS" : "FAIL") << "\n";
+
+    exportTiles(root);
 
     return 0;
 }

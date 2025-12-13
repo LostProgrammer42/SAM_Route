@@ -67,26 +67,29 @@ tiles_a = [
   {"name":"T0","llx":0,"lly":0,"wx":500,"wy":30,"filled":false},
   {"name":"T1","llx":0,"lly":30,"wx":30,"wy":40,"filled":false},
   {"name":"T2","llx":30,"lly":30,"wx":40,"wy":40,"filled":true},
-  {"name":"T3","llx":0,"lly":70,"wx":90,"wy":90,"filled":false},
-  {"name":"T4","llx":70,"lly":30,"wx":430,"wy":10,"filled":false},
-  {"name":"T5","llx":90,"lly":70,"wx":40,"wy":90,"filled":true},
-  {"name":"T6","llx":0,"lly":160,"wx":500,"wy":340,"filled":false},
-  {"name":"T7","llx":70,"lly":40,"wx":20,"wy":30,"filled":false},
-  {"name":"T8","llx":130,"lly":70,"wx":370,"wy":90,"filled":false},
-  {"name":"T9","llx":90,"lly":40,"wx":40,"wy":30,"filled":true},
-  {"name":"T10","llx":130,"lly":40,"wx":370,"wy":30,"filled":false}
-]
-
-
-tiles_b = [
-  {"name":"T0","llx":0,"lly":0,"wx":500,"wy":30,"filled":false},
-  {"name":"T1","llx":0,"lly":30,"wx":30,"wy":40,"filled":false},
-  {"name":"T2","llx":30,"lly":30,"wx":40,"wy":40,"filled":true},
   {"name":"T3","llx":0,"lly":70,"wx":500,"wy":430,"filled":false},
   {"name":"T4","llx":70,"lly":30,"wx":430,"wy":10,"filled":false},
   {"name":"T5","llx":70,"lly":40,"wx":20,"wy":30,"filled":false},
   {"name":"T6","llx":90,"lly":40,"wx":40,"wy":30,"filled":true},
   {"name":"T7","llx":130,"lly":40,"wx":370,"wy":30,"filled":false}
 ]
+
+
+
+tiles_b = [
+  {"name":"T0","llx":0,"lly":0,"wx":500,"wy":30,"filled":false},
+  {"name":"T1","llx":0,"lly":30,"wx":30,"wy":40,"filled":false},
+  {"name":"T2","llx":30,"lly":30,"wx":40,"wy":40,"filled":true},
+  {"name":"T3","llx":0,"lly":70,"wx":190,"wy":10,"filled":false},
+  {"name":"T4","llx":70,"lly":30,"wx":430,"wy":20,"filled":false},
+  {"name":"T5","llx":190,"lly":70,"wx":40,"wy":10,"filled":true},
+  {"name":"T6","llx":0,"lly":80,"wx":500,"wy":420,"filled":false},
+  {"name":"T7","llx":70,"lly":50,"wx":120,"wy":20,"filled":false},
+  {"name":"T8","llx":230,"lly":70,"wx":270,"wy":10,"filled":false},
+  {"name":"T9","llx":190,"lly":50,"wx":40,"wy":20,"filled":true},
+  {"name":"T10","llx":230,"lly":50,"wx":270,"wy":20,"filled":false}
+]
+
+
 
 jump_cut_loop(tiles_a, tiles_b, delay=1.2)
