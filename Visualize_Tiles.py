@@ -1,42 +1,87 @@
+import ast
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
-false = False
-true = True
-
-
-tiles = [
-  {"name":"T0","llx":0,"lly":0,"wx":500,"wy":30,"filled":false},
-  {"name":"T1","llx":0,"lly":30,"wx":30,"wy":40,"filled":false},
-  {"name":"T2","llx":30,"lly":30,"wx":40,"wy":40,"filled":true},
-  {"name":"T3","llx":0,"lly":70,"wx":190,"wy":10,"filled":false},
-  {"name":"T4","llx":70,"lly":30,"wx":430,"wy":20,"filled":false},
-  {"name":"T5","llx":190,"lly":70,"wx":40,"wy":10,"filled":true},
-  {"name":"T6","llx":0,"lly":80,"wx":500,"wy":420,"filled":false},
-  {"name":"T7","llx":70,"lly":50,"wx":120,"wy":20,"filled":false},
-  {"name":"T8","llx":230,"lly":70,"wx":270,"wy":10,"filled":false},
-  {"name":"T9","llx":190,"lly":50,"wx":40,"wy":20,"filled":true},
-  {"name":"T10","llx":230,"lly":50,"wx":270,"wy":20,"filled":false}
+# ---------- CONFIG ----------
+plane_files = [
+    ("plane0.sam", 0),
+    ("plane1.sam", 1),
+    ("plane2.sam", 2),
 ]
 
+# ---------- COLOR MAP ----------
+def layer_color(layer):
+    layer = layer.lower()
+    if layer == "none":
+        return "white"
+    if layer == "ndiff":
+        return "green"
+    if layer == "pdiff":
+        return "blue"
+    if layer == "ntransistor":
+        return "#006400"   # dark green
+    if layer == "ptransistor":
+        return "#00008B"   # dark blue
+    if layer == "polysilicon":
+        return "red"
+    if layer.startswith("m"):
+        return "purple"
+    return "gray"
 
-fig, ax = plt.subplots(figsize=(6,6))
+# ---------- LOAD ALL TILES ----------
+all_tiles = []
 
-for t in tiles:
-    rect = Rectangle((t["llx"], t["lly"]), t["wx"], t["wy"],
-                     linewidth=3 if t["filled"] else 1,
-                     fill=False)
+for fname, plane in plane_files:
+    with open(fname) as f:
+        tiles = ast.literal_eval(f.read())
+        for t in tiles:
+            t["plane"] = plane
+            all_tiles.append(t)
+
+# ---------- PLOT ----------
+fig, ax = plt.subplots(figsize=(8, 8))
+
+PLANE_STYLE = {
+    0: dict(alpha=0.60),
+    1: dict(alpha=0.45),
+    2: dict(alpha=0.30),
+}
+for t in all_tiles:
+    color = layer_color(t["layer"])
+    filled = t["filled"]
+    style = PLANE_STYLE[t["plane"]]
+    rect = Rectangle(
+        (t["llx"], t["lly"]),
+        t["wx"],
+        t["wy"],
+        linewidth=0.5 if filled else 1,
+        edgecolor=color if filled else "none",
+        facecolor=color if filled else "none",
+        alpha= style["alpha"] if filled else 1.0,
+        zorder=10 + t["plane"]   # higher plane on top
+    )
     ax.add_patch(rect)
-    cx = t["llx"] + t["wx"]/2.0
-    cy = t["lly"] + t["wy"]/2.0
-    label = t["name"] + ("\n(filled)" if t["filled"] else "")
-    ax.text(cx, cy, label, ha="center", va="center", fontsize=10)
 
-ax.set_xlim(-5, 505)
-ax.set_ylim(-5, 505)
-ax.set_aspect('equal', adjustable='box')
-ax.set_title("Corner-Stitched Tiles: center inserted into a big empty tile")
+    # draw net id (only if filled)
+    if filled and t["net"] != 0:
+        cx = t["llx"] + t["wx"] / 2
+        cy = t["lly"] + t["wy"] / 2
+        ax.text(cx, cy, str(t["net"]),
+                ha="center", va="center",
+                fontsize=8, color="black",
+                zorder=20)
+
+# ---------- AXES ----------
+ax.set_aspect("equal", adjustable="box")
 ax.set_xlabel("x")
 ax.set_ylabel("y")
-plt.grid(True, linestyle=':', linewidth=0.5)
+ax.set_title("Corner Stitch Layout (3 planes)")
+ax.grid(True, linestyle=":", linewidth=0.5)
+
+# auto bounds
+xs = [t["llx"] for t in all_tiles] + [t["llx"] + t["wx"] for t in all_tiles]
+ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
+ax.set_xlim(min(xs) - 5, max(xs) + 5)
+ax.set_ylim(min(ys) - 5, max(ys) + 5)
+
 plt.show()

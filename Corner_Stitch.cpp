@@ -638,13 +638,35 @@ bool moveTile(
     return true;
 }
 
+enum LayerType {
+    L_NONE = 0,
+    L_NDIFF,
+    L_PDIFF,
+    L_NTRANS,
+    L_PTRANS,
+    L_POLY,
+    L_M2
+};
 
 
-void exportTiles(CornerStitch* anchor) {
+string attrToLayer(unsigned int attr) {
+    switch (attr) {
+        case L_NDIFF:   return "ndiff";
+        case L_PDIFF:   return "pdiff";
+        case L_NTRANS:  return "ntransistor";
+        case L_PTRANS:  return "ptransistor";
+        case L_POLY:    return "polysilicon";
+        case L_M2:      return "m2";
+        default:        return "none";
+    }
+}
+
+
+void exportTiles(CornerStitch* anchor, const string& filename) {
     if (!anchor) { cout << "[]\n"; return; }
 
-    const long VIS_MIN = -500;   // visualization clamp
-    const long VIS_MAX =  500;
+    const long VIS_MIN = -60;   // visualization clamp
+    const long VIS_MAX =  60;
 
     unordered_set<CornerStitch*> seen;
     deque<CornerStitch*> dq;
@@ -663,7 +685,10 @@ void exportTiles(CornerStitch* anchor) {
             if (seen.insert(nb).second) dq.push_back(nb);
         }
     }
+    ofstream fout(filename);
+    if (!fout) return;
 
+    fout << "[\n";
     cout << "[\n";
     for (size_t i = 0; i < tiles.size(); i++) {
         CornerStitch* t = tiles[i];
@@ -690,42 +715,29 @@ void exportTiles(CornerStitch* anchor) {
              << "\"lly\":" << lly << ","
              << "\"wx\":" << wx << ","
              << "\"wy\":" << wy << ","
-             << "\"filled\":" << (filled ? "true" : "false")
+             << "\"filled\":" << (filled ? "True" : "False") << ","
+             << "\"net\":" << t->getNet() << ","
+             << "\"layer\":" << attrToLayer(t->getAttr())
+             << "}";
+        
+        fout << "  {"
+             << "\"name\":\"T" << i << "\","
+             << "\"llx\":" << llx << ","
+             << "\"lly\":" << lly << ","
+             << "\"wx\":" << wx << ","
+             << "\"wy\":" << wy << ","
+             << "\"filled\":" << (filled ? "True" : "False") << ","
+             << "\"net\":" << t->getNet() << ","
+             << "\"layer\":\"" << attrToLayer(t->getAttr()) << "\""
              << "}";
 
-        if (i + 1 < tiles.size()) cout << ",";
+        if (i + 1 < tiles.size()){
+            cout << ",";
+            fout << ",";}
+
         cout << "\n";
+        fout << "\n";
     }
     cout << "]\n";
+    fout << "]\n";
 }
-
-int main() {
-
-    CornerStitch* root = new CornerStitch(0, 0);   // a single infinite tile
-
-    
-    long lx = 30;
-    long ly = 30;
-    long wx = 40;   // width
-    long wy = 40;   // height
-
-    bool ok = insertTileRect(root, lx, ly, wx, wy, /*attr=*/1, /*net=*/0);
-    bool ok1 = insertTileRect(root, lx + 60, ly + 10, wx, 3*wy, /*attr=*/1, /*net=*/0);
-
-    cout << "Insert result: " << (ok & ok1 ? "SUCCESS" : "FAIL") << "\n";
-    exportTiles(root);
-    CornerStitch* tileToDelete = findTileContaining(root,100,100);
-    bool d = deleteTileAndCoalesce(root, tileToDelete);
-    cout << "deleteTileAndCoalesce -> " << (d ? "SUCCESS" : "FAIL") << "\n";
-    exportTiles(root);
-
-    CornerStitch* T6 = findTileContaining(root, 100, 60); // inside T6
-
-    bool moved = moveTile(root, T6, 100, 10); // move right + up
-    cout << "Move T6 -> " << (moved ? "SUCCESS" : "FAIL") << "\n";
-
-    exportTiles(root);
-
-    return 0;
-}
-
