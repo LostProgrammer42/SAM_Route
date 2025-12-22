@@ -102,7 +102,6 @@ class CornerStitch{
         void setBottom(CornerStitch* B) { ll.y = B; }
         void setRight(CornerStitch* R)  { ur.x = R; }
         void setTop(CornerStitch* T)    { ur.y = T; }
-        
 
         bool containsPoint(long x, long y) const {
             return (getllx() <= x && x < geturx() && getlly() <= y && y < getury());
@@ -216,29 +215,31 @@ CornerStitch* splitHorizontal(CornerStitch* t, long splitY) {
 
     CornerStitch* top = new CornerStitch(t->getllx(), splitY, t->isSpace(), t->isVirt(), t->getAttr(), t->getNet());
 
-    // === Fix pointers of top tile ===
-    // Top tile inherits right, top pointers from t
-    top->setTop(t->top());
+    // copy horizontal neighbors (left & right pointers) so the new top tile shares the same horizontal adjacency
+    top->setLeft(t->left());
     top->setRight(t->right());
-    // Top tile has original tile as the bottom
+    
+    // set top's top neighbor to whatever was above t
+    top->setTop(t->top()); 
+
+    // the new top's bottom neighbor is the original tile t
     top->setBottom(t);
-    // Find the new left pointer
-    top->setLeft(findTileContaining(t,t->getllx() - 1 ,splitY+1));
 
-
-    // === Fix pointers of original tile ===
-    // Left, Bottom pointers remain same
-    // Update the original tile's top pointer to point to the new top tile
+    // update the original tile's top pointer to point to the new top tile
     t->setTop(top);
-    // Find the new right pointer
-    t->setRight(findTileContaining(t,t->geturx() + 1 ,splitY-1));
 
-
-    // Fix neighbors above the top tile if they used to point at t for their bottom links
+    // fix neighbors above the top tile if they used to point at t for their bottom links
     if (top->top()) {
         if (top->top()->bottom() == t) top->top()->setBottom(top);
     }
     
+    // fix neighbors to the left/right above row if they pointed their top->something at t
+    if (top->left()) {
+        if (top->left()->top() == t) top->left()->setTop(top);
+    }
+    if (top->right()) {
+        if (top->right()->bottom() == t) top->right()->setBottom(top);
+    }
     return top;
 }
 
@@ -250,6 +251,7 @@ CornerStitch* splitVertical(CornerStitch* t, long splitX) {
     long llx = t->getllx();
     long urx = t->geturx();
 
+    // must split strictly inside
     if (!(llx < splitX && splitX < urx)) return nullptr;
 
     // create new right piece (inherits flags/attrs/net from t)
@@ -257,24 +259,18 @@ CornerStitch* splitVertical(CornerStitch* t, long splitX) {
                                                t->isSpace(), t->isVirt(),
                                                t->getAttr(), t->getNet());
 
-    // === Fix pointers of right tile ===
-    // Right tile inherits right, top pointers from t
+    // copy vertical neighbors (bottom/top)
+    rightTile->setBottom(t->bottom());
     rightTile->setTop(t->top());
+
+    // horizontal neighbors: new right's right = old right; new right's left = t
     rightTile->setRight(t->right());
-    // Right tile has original tile as the left pointer
     rightTile->setLeft(t);
-    // Find the new bottom pointer
-    rightTile->setBottom(findTileContaining(t,splitX + 1, t->getlly() - 1));
 
-    // === Fix pointers of original tile ===
-    // Left, Bottom pointers remain same
-    // Update the original tile's right pointer to point to the new right tile
+    // link original tile to point to new right tile
     t->setRight(rightTile);
-    // Find the new top pointer
-    t->setTop(findTileContaining(t,splitX-1 ,t->getury() + 1));
 
-
-    // === Neighbour fixes ===
+    // ---- neighbor fixes (conservative, only fix pointers that exactly matched t) ----
 
     // If the old right neighbor considered t its left, update it to point to rightTile
     if (rightTile->right() && rightTile->right()->left() == t)
@@ -288,12 +284,8 @@ CornerStitch* splitVertical(CornerStitch* t, long splitX) {
     if (rightTile->top() && rightTile->top()->left() == t)
         rightTile->top()->setLeft(rightTile);
 
-    if (rightTile->bottom() && rightTile->bottom()->top() == t)
-        rightTile->bottom()->setTop(rightTile);
-        
     return rightTile;
 }
-
 // For each tile crossing the vertical line x, split it (creating a right piece)
 bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
     if (!anchor || !(y0 < y1)) return false;
@@ -304,7 +296,7 @@ bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
     while (y < y1) {
         if (++steps > MAX_STEPS) return false;
         // find tile that contains (x-1, y) — tile immediately left of the split at this y
-        CornerStitch* leftTile = findTileContaining(anchor, x - 1, y+0.1);
+        CornerStitch* leftTile = findTileContaining(anchor, x - 1, y);
         if (!leftTile) return false;
 
         // If the tile does not cross the split line (its right <= x), advance to its top
@@ -318,7 +310,26 @@ bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
         // split the leftTile at x (creates right piece with llx = x)
         CornerStitch* rightPiece = splitVertical(leftTile, x);
         if (!rightPiece) return false;
-        
+        CornerStitch* l = leftTile;
+        CornerStitch* r = rightPiece;
+
+        while (true) {
+            long rx = r->geturx() - 1;
+            long ry = r->getury() + 1;
+
+            CornerStitch* rt = findTileContaining(anchor, rx, ry);
+            if (!rt || rt == r) break;
+
+            r->setTop(rt);
+            rt->setBottom(r);
+
+            l = rt->left();   // advance upward consistently
+            r = rt;
+
+            if (!l) break;
+            if (!(l->getllx() < x && x < l->geturx())) break;
+        }
+
         // After splitting, both leftTile and rightPiece share same vertical span.
         // Advance y to the top of that span.
         y = leftTile->getury();
@@ -350,24 +361,26 @@ bool splitHorizontalEdge(CornerStitch* anchor, long y, long x0, long x1) {
         // split belowTile horizontally at y (creates top piece with lly = y)
         CornerStitch* topPiece = splitHorizontal(belowTile, y);
         if (!topPiece) return false;
-        CornerStitch* above = topPiece->top();
-        if (above) {
-            // walk left
-            for (CornerStitch* t = above; t; t = t->left()) {
-                if (t->bottom() == belowTile)
-                    t->setBottom(topPiece);
-                else
-                    break;
-            }
+        CornerStitch* b = belowTile;
+        CornerStitch* t = topPiece;
 
-            // walk right (skip above itself to avoid double-check)
-            for (CornerStitch* t = above->right(); t; t = t->right()) {
-                if (t->bottom() == belowTile)
-                    t->setBottom(topPiece);
-                else
-                    break;
-            }
+        while (true) {
+            long rx = b->geturx() + 1;
+            long ry = b->getury() - 1;
+
+            CornerStitch* br = findTileContaining(anchor, rx, ry);
+            if (!br || br == b) break;
+
+            b->setRight(br);
+            br->setLeft(b);
+
+            b = br->top();   // advance upward consistently
+            t = br;
+
+            if (!b) break;
+            if (!(b->getlly() < y && y < b->getury())) break;
         }
+
         // Advance x to the right boundary of the tile we just processed
         x = belowTile->geturx();
     }

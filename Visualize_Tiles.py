@@ -4,11 +4,12 @@ from matplotlib.patches import Rectangle
 
 # ---------- CONFIG ----------
 plane_files = [
-    ("plane0.sam", 0),
-    ("plane1.sam", 1),
-    ("plane2.sam", 2),
+    ("plane0_bloated.sam", 0)
+    # ("plane1_bloated.sam", 1)
+    # ("plane2.sam", 2),
 ]
 
+Tile_boundaries = True
 # ---------- COLOR MAP ----------
 def layer_color(layer):
     layer = layer.lower()
@@ -26,6 +27,14 @@ def layer_color(layer):
         return "red"
     if layer.startswith("m"):
         return "purple"
+    if layer == "left":
+        return "orange"
+    if layer == "right":
+        return "cyan"
+    if layer == "top":
+        return "pink"
+    if layer == "bottom":
+        return "black"
     return "gray"
 
 # ---------- LOAD ALL TILES ----------
@@ -55,7 +64,7 @@ for t in all_tiles:
         t["wx"],
         t["wy"],
         linewidth=0.5 if filled else 1,
-        edgecolor=color if filled else "none",
+        edgecolor="black" if Tile_boundaries else (color if filled else "none"),
         facecolor=color if filled else "none",
         alpha= style["alpha"] if filled else 1.0,
         zorder=10 + t["plane"]   # higher plane on top
@@ -84,4 +93,5 @@ ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
 ax.set_xlim(min(xs) - 5, max(xs) + 5)
 ax.set_ylim(min(ys) - 5, max(ys) + 5)
 
+plt.savefig("Plane_0_Bloated.png")
 plt.show()
