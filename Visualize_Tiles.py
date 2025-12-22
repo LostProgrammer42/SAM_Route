@@ -5,8 +5,8 @@ from matplotlib.patches import Rectangle
 # ---------- CONFIG ----------
 plane_files = [
     ("plane0.sam", 0),
-    ("plane1.sam", 1),
-    ("plane2.sam", 2),
+    # ("plane1.sam", 1),
+    # ("plane2.sam", 2),
 ]
 
 # ---------- COLOR MAP ----------
@@ -55,7 +55,7 @@ for t in all_tiles:
         t["wx"],
         t["wy"],
         linewidth=0.5 if filled else 1,
-        edgecolor=color if filled else "none",
+        edgecolor= "black",
         facecolor=color if filled else "none",
         alpha= style["alpha"] if filled else 1.0,
         zorder=10 + t["plane"]   # higher plane on top
