@@ -74,8 +74,8 @@ unsigned int layerToAttr(const string& layer) {
 }
 
 long layerBloat(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff") return 0;
-    if (layer == "ntransistor" || layer == "ptransistor") return 0;
+    if (layer == "ndiff" || layer == "pdiff") return 1;
+    if (layer == "ntransistor" || layer == "ptransistor") return 1;
     if (layer == "polysilicon") return 1;
     if (layer == "m2") return 0;
     return 0;
@@ -90,6 +90,7 @@ struct RectRec {
 };
 
 vector<RectRec> rects;
+
 int main(int argc, char** argv){
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect>\n";

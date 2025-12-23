@@ -1,4 +1,4 @@
-// Author: Stavan Mehta
+// Author: Stavan Mehta, Affaan Fakih
 // Version: Pilot Initial (V0)
 
 #include <bits/stdc++.h>
@@ -375,53 +375,14 @@ bool splitHorizontalEdge(CornerStitch* anchor, long y, long x0, long x1) {
 }
 
 
-// Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
-bool insertTileRect(CornerStitch* anchor,
-                             long lx, long ly, long wx, long wy,
-                             unsigned int attr = 0, unsigned int net = 0)
-{
-    if (!anchor || wx <= 0 || wy <= 0) return false;
-    long rx = lx + wx;
-    long ry = ly + wy;
-
-    //if any tile that fully lies inside is already filled -> reject
-    auto intersect0 = tilesInRect(anchor, lx, ly, wx, wy);
-    for (auto t : intersect0) if (t && !t->isSpace()) return false;
-
-     // Split horizontal edges first (bottom and top) for horizontal span [lx, rx)
-    if (!splitHorizontalEdge(anchor, ly, lx, rx)) return false;
-    if (!splitHorizontalEdge(anchor, ry, lx, rx)) return false;
-
-    // Then split vertical edges along x = lx and x = rx for full vertical span [ly, ry)
-    if (!splitVerticalEdge(anchor, lx, ly, ry)) return false;
-    if (!splitVerticalEdge(anchor, rx, ly, ry)) return false;
-    // Now collect tiles that intersect the rectangle (they should be aligned to the rectangle grid)
-    auto finalTiles = tilesInRect(anchor, lx, ly, wx, wy);
-
-    // Mark tiles fully inside rectangle as occupied (space=0) and set attr/net.
-    for (auto t : finalTiles) {
-        if (!t) continue;
-        if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
-            t->setSpace(0);
-            t->setAttr(attr);
-            t->setNet(net);
-        } else {
-            // If any overlapping but not fully-contained tile is already occupied -> collision
-            if (!t->isSpace()) return false;
-        }
-    }
-
-    return true;
-}
-
-
 //============ MERGING =================
 //============ SIMPLE MERGE HELPERS ==================
 bool mergeHorizontalOnce(CornerStitch* left) {
     if (!left) return false;
     CornerStitch* right = left->right();
     if (!right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
+    if (left->getAttr() != right->getAttr()) return false;
+    if (left->isSpace() != right->isSpace()) return false;
     if (left->getlly() != right->getlly() || left->getury() != right->getury()) return false;
 
     CornerStitch* rightRight = right->right();
@@ -441,7 +402,8 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
     if (!bottom) return false;
     CornerStitch* top = bottom->top();
     if (!top) return false;
-    if (!bottom->isSpace() || !top->isSpace()) return false;
+    if (bottom->getAttr() != top->getAttr()) return false;
+    if (bottom->isSpace() != top->isSpace()) return false;
     if (bottom->getllx() != top->getllx() || bottom->geturx() != top->geturx()) return false;
 
     CornerStitch* topTop = top->top();
@@ -460,8 +422,8 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
 bool splitRightToMatchLeft(CornerStitch* anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
-
+    if (left->getAttr() != right->getAttr()) return false;
+    if (left->isSpace() != right->isSpace()) return false;
     long ly = left->getlly();
     long uy = left->getury();
     long x0 = right->getllx();
@@ -483,7 +445,8 @@ bool splitRightToMatchLeft(CornerStitch* anchor, CornerStitch* left, CornerStitc
 bool alignAndMergeAdjacent(CornerStitch* anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
+    if (left->getAttr() != right->getAttr()) return false;
+    if (left->isSpace() != right->isSpace()) return false;
 
     // ensure right column has a slice that matches left's vertical span
     if (!splitRightToMatchLeft(anchor, left, right)) return false;
@@ -588,7 +551,7 @@ int passMergeVerticalSimple(CornerStitch* anchor) {
 
 // Top-level coalesce used by deletion: horizontal-align+merge passes followed by normal vertical passes.
 // Repeat until stable (or until maxRounds reached).
-int coalesceAfterDeletion(CornerStitch* anchor, int maxRounds = 20) {
+int coalesce(CornerStitch* anchor, int maxRounds = 20) {
     if (!anchor) return 0;
     int total = 0;
     for (int r = 0; r < maxRounds; ++r) {
@@ -605,7 +568,7 @@ bool deleteTileAndCoalesce(CornerStitch* anchor, CornerStitch* t) {
     if (!anchor || !t) return false;
     t->setSpace(1); // mark as free
     // try to merge/align until stable
-    coalesceAfterDeletion(anchor, 50);
+    coalesce(anchor, 50);
     return true;
 }
 
@@ -620,11 +583,49 @@ bool deleteRectAndCoalesce(CornerStitch* anchor, long lx, long ly, long wx, long
             tt->setSpace(1);
         }
     }
-    coalesceAfterDeletion(anchor, 50);
+    coalesce(anchor, 50);
     return true;
 }
 
+// Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
+bool insertTileRect(CornerStitch* anchor,
+                             long lx, long ly, long wx, long wy,
+                             unsigned int attr = 0, unsigned int net = 0)
+{
+    if (!anchor || wx <= 0 || wy <= 0) return false;
+    long rx = lx + wx;
+    long ry = ly + wy;
 
+    //if any tile that fully lies inside is already filled -> reject
+    auto intersect0 = tilesInRect(anchor, lx, ly, wx, wy);
+    for (auto t : intersect0) if (t && !t->isSpace()) return false;
+
+     // Split horizontal edges first (bottom and top) for horizontal span [lx, rx)
+    if (!splitHorizontalEdge(anchor, ly, lx, rx)) return false;
+    if (!splitHorizontalEdge(anchor, ry, lx, rx)) return false;
+
+    // Then split vertical edges along x = lx and x = rx for full vertical span [ly, ry)
+    if (!splitVerticalEdge(anchor, lx, ly, ry)) return false;
+    if (!splitVerticalEdge(anchor, rx, ly, ry)) return false;
+    // Now collect tiles that intersect the rectangle (they should be aligned to the rectangle grid)
+    auto finalTiles = tilesInRect(anchor, lx, ly, wx, wy);
+
+    // Mark tiles fully inside rectangle as occupied (space=0) and set attr/net.
+    for (auto t : finalTiles) {
+        if (!t) continue;
+        if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
+            t->setSpace(0);
+            t->setAttr(attr);
+            t->setNet(net);
+        } else {
+            // If any overlapping but not fully-contained tile is already occupied -> collision
+            if (!t->isSpace()) return false;
+        }
+    }
+
+    //coalesce(anchor,50);
+    return true;
+}
 
 bool moveTile(
     CornerStitch* root,
