@@ -1,4 +1,61 @@
-CornerStitch* src;
+int main(int argc, char** argv){
+    if (argc < 2) {
+        cerr << "Usage: ./Route <file.rect>\n";
+        return 1;
+    }
+
+    ifstream fin(argv[1]);
+    if (!fin) {
+        cerr << "Error: cannot open " << argv[1] << "\n";
+        return 1;
+    }
+
+    CornerStitch* planeRoots[3];
+    CornerStitch* bloatedRoots[3];
+    for (int i = 0; i < 3; i++){
+        planeRoots[i] = new CornerStitch(0, 0);
+        bloatedRoots[i] = new CornerStitch(0, 0);
+    }
+
+    string line;
+    int lineNo = 0;
+    while (getline(fin, line)) {
+        lineNo++;
+
+        string net, layer;
+        long lx, ly, wx, wy;
+
+        if (!parseRectLine(line, net, layer, lx, ly, wx, wy))
+            continue;
+
+        int plane = layerToPlane(layer);
+        if (plane < 0) continue; // skip unknown layers
+
+        unsigned int netId = getNetId(net);
+        unsigned int attr = layerToAttr(layer);
+
+        bool ok = insertTileRect(planeRoots[plane],lx, ly,wx, wy,attr,netId);
+        
+        if (!ok) {
+            cout << "Insert failed at line " << lineNo
+                 << " (plane " << plane << "): "
+                 << line << "\n";
+        }
+        rects.push_back({plane,layer,attr,netId,lx, ly, wx, wy});
+    }
+
+    for (auto& r : rects) {
+        if (r.attr != L_POLY) continue;
+
+        CornerStitch* t = findTileContaining(
+            planeRoots[r.plane],
+            r.lx + 1,
+            r.ly + 1
+        );
+        if (t)
+            polyByNet[r.net].push_back(t);
+    }
+    CornerStitch* src;
     CornerStitch* dst;
     long net_route;
 
@@ -53,10 +110,9 @@ CornerStitch* src;
 
     cout << "\n=== BLOATED PLANE " << 1 << " ===\n"; 
     exportTiles(bloatedRoots[1], "plane1_bloated.sam");
-        
+    
     // Actual Routing
     // ROUTE src to dst
-    if(0){
     auto srcPorts = getPolyPorts(src, bloatedRoots[0]);
     auto dstPorts = getPolyPorts(dst, bloatedRoots[0]);
     cout << "\n=== SRC PORTS ===\n";
@@ -159,6 +215,18 @@ CornerStitch* src;
         }
 
     }
+    for (const auto& r : rects) {
+        int plane = r.plane;
+
+        // find the exact tile that was inserted
+        CornerStitch* t = findTileContaining(
+            planeRoots[plane],
+            r.lx + 1,
+            r.ly + 1
+        );
+        deleteTileAndCoalesce(planeRoots[0],t);
+    }
+
 
     // CornerStitch* poly = findTileContaining(planeRoots[0],30,40);
     
@@ -169,4 +237,4 @@ CornerStitch* src;
 
     cout << "\n=== PLANE " << 0 << " ===\n"; 
     exportTiles(planeRoots[0], "plane0_route.sam");
-    }
+    return 0;

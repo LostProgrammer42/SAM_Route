@@ -658,8 +658,8 @@ bool mergeHorizontalOnce(CornerStitch* left) {
         else
             break;
     }
-    cout << "Deleting Right: " << right << "\n";
-    dumpIncomingPointers(left,right);
+    // cout << "Deleting Right: " << right << "\n";
+    // dumpIncomingPointers(left,right);
     delete right;
     return true;
 }
@@ -709,8 +709,8 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
         else
             break;
     }
-    cout << "Deleting Top: " << top << "\n";
-    dumpIncomingPointers(bottom, top);
+    // cout << "Deleting Top: " << top << "\n";
+    // dumpIncomingPointers(bottom, top);
     delete top;
     return true;
 }
@@ -939,7 +939,7 @@ bool moveTile(
 
 
 
-void exportTiles(CornerStitch* anchor, const string& filename) {
+void exportTiles(CornerStitch* anchor, const string& filename, bool showInTerminal = false) {
     if (!anchor) { cout << "[]\n"; return; }
 
     const long VIS_MIN = -60;   // visualization clamp
@@ -966,7 +966,8 @@ void exportTiles(CornerStitch* anchor, const string& filename) {
     if (!fout) return;
 
     fout << "[\n";
-    cout << "[\n";
+    if(showInTerminal)
+        cout << "[\n";
     for (size_t i = 0; i < tiles.size(); i++) {
         CornerStitch* t = tiles[i];
 
@@ -985,18 +986,18 @@ void exportTiles(CornerStitch* anchor, const string& filename) {
         long wy = ury - lly;
 
         bool filled = !t->isSpace();
-
-        cout << "  {"
-             << "\"name\":\"T" << i << "\","
-             << "\"llx\":" << llx << ","
-             << "\"lly\":" << lly << ","
-             << "\"wx\":" << wx << ","
-             << "\"wy\":" << wy << ","
-             << "\"filled\":" << (filled ? "True" : "False") << ","
-             << "\"net\":" << t->getNet() << ","
-             << "\"layer\":" << attrToLayer(t->getAttr())
-             << "}";
-        
+        if(showInTerminal){
+            cout << "  {"
+                << "\"name\":\"T" << i << "\","
+                << "\"llx\":" << llx << ","
+                << "\"lly\":" << lly << ","
+                << "\"wx\":" << wx << ","
+                << "\"wy\":" << wy << ","
+                << "\"filled\":" << (filled ? "True" : "False") << ","
+                << "\"net\":" << t->getNet() << ","
+                << "\"layer\":" << attrToLayer(t->getAttr())
+                << "}";
+        }
         fout << "  {"
              << "\"name\":\"T" << i << "\","
              << "\"llx\":" << llx << ","
@@ -1009,12 +1010,15 @@ void exportTiles(CornerStitch* anchor, const string& filename) {
              << "}";
 
         if (i + 1 < tiles.size()){
-            cout << ",";
-            fout << ",";}
-
-        cout << "\n";
+            if(showInTerminal)
+                cout << ",";
+            fout << ",";
+        }
+        if(showInTerminal)
+            cout << "\n";
         fout << "\n";
     }
-    cout << "]\n";
+    if(showInTerminal)
+        cout << "]\n";
     fout << "]\n";
 }
