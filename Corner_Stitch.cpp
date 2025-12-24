@@ -8,6 +8,38 @@ using namespace std;
 #define MAX_VALUE (numeric_limits<long>::max())
 
 #define DEBUG_MODE false
+
+enum LayerType {
+    L_NONE = 0,
+    L_NDIFF,
+    L_PDIFF,
+    L_NTRANS,
+    L_PTRANS,
+    L_POLY,
+    L_M2
+};
+#define L_PTR_LEFT   50
+#define L_PTR_RIGHT  51
+#define L_PTR_TOP    52
+#define L_PTR_BOTTOM 53
+
+
+string attrToLayer(unsigned int attr) {
+    switch (attr) {
+        case L_NDIFF:   return "ndiff";
+        case L_PDIFF:   return "pdiff";
+        case L_NTRANS:  return "ntransistor";
+        case L_PTRANS:  return "ptransistor";
+        case L_POLY:    return "polysilicon";
+        case L_M2:      return "m2";
+        case L_PTR_LEFT: return "left";
+        case L_PTR_RIGHT: return "right";
+        case L_PTR_TOP: return "top";
+        case L_PTR_BOTTOM: return "bottom";
+        default:        return "none";
+    }
+}
+
 class Rectangle {
 private:
     long _llx = 0, _lly = 0;  //Lower Left Corner Coordinated
@@ -104,7 +136,7 @@ class CornerStitch{
         void setTop(CornerStitch* T)    { ur.y = T; }
         
 
-        bool containsPoint(long x, long y) const {
+        bool containsPoint(float x, float y) const {
             return (getllx() <= x && x < geturx() && getlly() <= y && y < getury());
         }
 
@@ -121,9 +153,8 @@ class CornerStitch{
 // Finds the tile that contains point (x,y)
 // anchor: any known tile (commonly a root/sentinel)
 // Returns pointer to the containing CornerStitch, or nullptr if not found
-CornerStitch* findTileContaining(CornerStitch *anchor, long x, long y) {
+CornerStitch* findTileContaining(CornerStitch *anchor, float x, float y) {
     if (!anchor) return nullptr;
-
     if (anchor->containsPoint(x,y)) return anchor;
 
     // Heuristic: walk left to get nearer horizontally (if possible)
@@ -223,7 +254,8 @@ CornerStitch* splitHorizontal(CornerStitch* t, long splitY) {
     // Top tile has original tile as the bottom
     top->setBottom(t);
     // Find the new left pointer
-    top->setLeft(findTileContaining(t,t->getllx() - 1 ,splitY+1));
+
+    top->setLeft(findTileContaining(t,t->getllx() - 0.1 ,splitY+0.1));
 
 
     // === Fix pointers of original tile ===
@@ -231,20 +263,71 @@ CornerStitch* splitHorizontal(CornerStitch* t, long splitY) {
     // Update the original tile's top pointer to point to the new top tile
     t->setTop(top);
     // Find the new right pointer
-    t->setRight(findTileContaining(t,t->geturx() + 1 ,splitY-1));
+    t->setRight(findTileContaining(t,t->geturx() + 0.1 ,splitY-0.1));
 
 
     // Fix neighbors above the top tile if they used to point at t for their bottom links
-    if (top->top()) {
-        if (top->top()->bottom() == t) top->top()->setBottom(top);
+    CornerStitch* above = top->top();
+    if (above) {
+        // walk left
+        for (CornerStitch* cur = above; cur; cur = cur->left()) {
+            if (cur->bottom() == t)
+                cur->setBottom(top);
+            else
+                break;
+        }
+        // walk right
+        for (CornerStitch* cur = above->right(); cur; cur = cur->right()) {
+            if (cur->bottom() == t)
+                cur->setBottom(top);
+            else
+                break;
+        }
     }
+
+    CornerStitch* right = top->right();
+    if (right) {
+        // walk down
+        for (CornerStitch* cur = right; cur; cur = cur->bottom()) {
+            if (cur->left() == t && cur->getlly() > splitY)
+                cur->setLeft(top);
+            else
+                break;
+        }
+        // walk up
+        for (CornerStitch* cur = right; cur; cur = cur->top()) {
+            if (cur->left() == t && cur->getlly() > splitY)
+                cur->setLeft(top);
+            else
+                break;
+        }
+        
+    }   
+    CornerStitch* left = top->left();
+    if (left) {
+        // walk up
+        for (CornerStitch* cur = left; cur; cur = cur->top()) {
+            if (cur->right() == t && cur->getury() > splitY)
+                cur->setRight(top);
+            else
+                break;
+        }
+        // walk down
+        for (CornerStitch* cur = left; cur; cur = cur->bottom()) {
+            if (cur->right() == t && cur->getury() > splitY)
+                cur->setRight(top);
+            else
+                break;
+        }
+    }
+    
     
     return top;
 }
 
 // Split tile t vertically at splitX (splitX is the llx of the new right tile)
 // Returns pointer to the new right tile on success, nullptr on failure
-CornerStitch* splitVertical(CornerStitch* t, long splitX) {
+CornerStitch* splitVertical(CornerStitch* t, long splitX, bool debug = false) {
     if (!t) return nullptr;
 
     long llx = t->getllx();
@@ -264,38 +347,79 @@ CornerStitch* splitVertical(CornerStitch* t, long splitX) {
     // Right tile has original tile as the left pointer
     rightTile->setLeft(t);
     // Find the new bottom pointer
-    rightTile->setBottom(findTileContaining(t,splitX + 1, t->getlly() - 1));
+    rightTile->setBottom(findTileContaining(t,splitX + 0.1, t->getlly() - 0.1));
 
     // === Fix pointers of original tile ===
     // Left, Bottom pointers remain same
     // Update the original tile's right pointer to point to the new right tile
     t->setRight(rightTile);
     // Find the new top pointer
-    t->setTop(findTileContaining(t,splitX-1 ,t->getury() + 1));
+    t->setTop(findTileContaining(t,splitX-0.1 ,t->getury() + 0.1));
 
 
     // === Neighbour fixes ===
 
-    // If the old right neighbor considered t its left, update it to point to rightTile
-    if (rightTile->right() && rightTile->right()->left() == t)
-        rightTile->right()->setLeft(rightTile);
-
+    CornerStitch* rNbr = rightTile->right();
+    if (rNbr) {
+        // walk down
+        for (CornerStitch* cur = rNbr; cur; cur = cur->bottom()) {
+            if (cur->left() == t)
+                cur->setLeft(rightTile);
+            else
+                break;
+        }
+        // walk up
+        for (CornerStitch* cur = rNbr->top(); cur; cur = cur->top()) {
+            if (cur->left() == t){
+                cur->setLeft(rightTile);
+            }
+            else
+                break;
+        }
+    }
     // If bottom neighbor had its right pointer pointing to t, update it to rightTile
-    if (rightTile->bottom() && rightTile->bottom()->right() == t)
-        rightTile->bottom()->setRight(rightTile);
+    CornerStitch* below = rightTile->bottom();
+    if (below) {
+        // walk left
+        for (CornerStitch* cur = below; cur; cur = cur->left()) {
+            if (cur->top() == t && cur->geturx() > splitX)
+                cur->setTop(rightTile);
+            else
+                break;
+        }
+        // walk right
+        for (CornerStitch* cur = below->right(); cur; cur = cur->right()) {
+            if (cur->top() == t && cur->geturx() > splitX)
+                cur->setTop(rightTile);
+            else
+                break;
+        }
+    }
 
     // If top neighbor had its left pointer pointing to t, update it to rightTile
-    if (rightTile->top() && rightTile->top()->left() == t)
-        rightTile->top()->setLeft(rightTile);
-
-    if (rightTile->bottom() && rightTile->bottom()->top() == t)
-        rightTile->bottom()->setTop(rightTile);
+    CornerStitch* above = rightTile->top();
+    if (above) {
+        // walk left
+        for (CornerStitch* cur = above; cur; cur = cur->left()) {
+            if (cur->bottom() == t && cur->getllx() >= splitX)
+                cur->setBottom(rightTile);
+            else
+                break;
+        }
+        // walk right
+        for (CornerStitch* cur = above->right(); cur; cur = cur->right()) {
+            if (cur->bottom() == t && cur->getllx() >= splitX)
+                cur->setBottom(rightTile);
+            else
+                break;
+        }
+    }
         
     return rightTile;
 }
 
 // For each tile crossing the vertical line x, split it (creating a right piece)
-bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
+bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1, bool debug = false) {
     if (!anchor || !(y0 < y1)) return false;
     long y = y0;
     const int MAX_STEPS = 100000;
@@ -316,7 +440,7 @@ bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
         }
 
         // split the leftTile at x (creates right piece with llx = x)
-        CornerStitch* rightPiece = splitVertical(leftTile, x);
+        CornerStitch* rightPiece = splitVertical(leftTile, x, debug);
         if (!rightPiece) return false;
         
         // After splitting, both leftTile and rightPiece share same vertical span.
@@ -350,30 +474,12 @@ bool splitHorizontalEdge(CornerStitch* anchor, long y, long x0, long x1) {
         // split belowTile horizontally at y (creates top piece with lly = y)
         CornerStitch* topPiece = splitHorizontal(belowTile, y);
         if (!topPiece) return false;
-        CornerStitch* above = topPiece->top();
-        if (above) {
-            // walk left
-            for (CornerStitch* t = above; t; t = t->left()) {
-                if (t->bottom() == belowTile)
-                    t->setBottom(topPiece);
-                else
-                    break;
-            }
-
-            // walk right (skip above itself to avoid double-check)
-            for (CornerStitch* t = above->right(); t; t = t->right()) {
-                if (t->bottom() == belowTile)
-                    t->setBottom(topPiece);
-                else
-                    break;
-            }
-        }
+        
         // Advance x to the right boundary of the tile we just processed
         x = belowTile->geturx();
     }
     return true;
 }
-
 
 // Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
 bool insertTileRect(CornerStitch* anchor,
@@ -410,48 +516,200 @@ bool insertTileRect(CornerStitch* anchor,
             if (!t->isSpace()) return false;
         }
     }
-
     return true;
 }
+
+//===========DEBUGGING HELPERS=============
+struct IncomingRef {
+    CornerStitch* owner;
+    string via;
+};
+
+vector<IncomingRef>
+findIncomingPointers(CornerStitch* anchor, CornerStitch* target) {
+    vector<IncomingRef> refs;
+    if (!anchor || !target) return refs;
+
+    unordered_set<CornerStitch*> seen;
+    queue<CornerStitch*> q;
+
+    q.push(anchor);
+    seen.insert(anchor);
+
+    while (!q.empty()) {
+        CornerStitch* t = q.front();
+        q.pop();
+        if (!t) continue;
+
+        if (t->top() == target)
+            refs.push_back({t, "top"});
+        if (t->bottom() == target)
+            refs.push_back({t, "bottom"});
+        if (t->left() == target)
+            refs.push_back({t, "left"});
+        if (t->right() == target)
+            refs.push_back({t, "right"});
+
+        CornerStitch* nbrs[4] = {
+            t->left(),
+            t->right(),
+            t->top(),
+            t->bottom()
+        };
+
+        for (CornerStitch* nb : nbrs) {
+            if (!nb) continue;
+            if (seen.insert(nb).second)
+                q.push(nb);
+        }
+    }
+    return refs;
+}
+void dumpIncomingPointers(CornerStitch* anchor, CornerStitch* target) {
+    auto refs = findIncomingPointers(anchor, target);
+
+    cout << "\n==== INCOMING POINTER CHECK ====\n";
+    cout << "Target tile @ " << target << "\n";
+    cout << "  llx=" << target->getllx()
+         << " lly=" << target->getlly()
+         << " wx=" << (target->geturx() - target->getllx())
+         << " wy=" << (target->getury() - target->getlly())
+         << " layer=" << attrToLayer(target->getAttr())
+         << "\n";
+    if (refs.empty()) {
+        cout << "  NONE\n";
+        return;
+    }
+    cout << "Found Incoming pointers (" << refs.size() << "):\n";
+    for (auto& r : refs) {
+        CornerStitch* t = r.owner;
+
+        long llx = t->getllx();
+        long lly = t->getlly();
+        long wx  = t->geturx() - t->getllx();
+        long wy  = t->getury() - t->getlly();
+
+        cout << "  Tile @" << t
+             << " via " << r.via << "\n"
+             << "    llx=" << llx
+             << " lly=" << lly
+             << " wx=" << wx
+             << " wy=" << wy
+             << " layer=" << attrToLayer(t->getAttr())
+             << "\n";
+    }
+
+    cout << "==== END CHECK ====\n";
+
+}
+
 
 
 //============ MERGING =================
 //============ SIMPLE MERGE HELPERS ==================
 bool mergeHorizontalOnce(CornerStitch* left) {
     if (!left) return false;
+
     CornerStitch* right = left->right();
     if (!right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
-    if (left->getlly() != right->getlly() || left->getury() != right->getury()) return false;
 
-    CornerStitch* rightRight = right->right();
-    left->setRight(rightRight);
-    if (rightRight && rightRight->left() == right) rightRight->setLeft(left);
+    if (right->left() != left) return false;
+    if (left->getAttr() != right->getAttr()) return false;
+    if (left->isSpace() != right->isSpace()) return false;
+    if (left->getlly() != right->getlly() ||
+        left->getury() != right->getury()) return false;
+    
+    left->setRight(right->right());
+    left->setTop(right->top());
 
-    // Fix simple vertical neighbor pointers that referenced right -> now should reference left
-    if (right->top() && right->top()->bottom() == right) right->top()->setBottom(left);
-    if (right->bottom() && right->bottom()->top() == right) right->bottom()->setTop(left);
 
-    // safe delete (optional): if you keep external references to tiles, DON'T delete.
+    // ---- tiles ABOVE right ----
+    for (CornerStitch* t = right->top(); t; t = t->left()) {
+        if (t->bottom() == right)
+            t->setBottom(left);
+        else
+            break;
+    }
+    for (CornerStitch* t = right->top()->right(); t; t = t->right()) {
+        if (t->bottom() == right)
+            t->setBottom(left);
+        else
+            break;
+    }
+
+    // ---- tiles BELOW right ----
+    for (CornerStitch* t = right->bottom(); t; t = t->right()) {
+        if (t->top() == right)
+            t->setTop(left);
+        else
+            break;
+    }
+    for (CornerStitch* t = right->bottom()->left(); t; t = t->left()) {
+        if (t->top() == right)
+            t->setTop(left);
+        else
+            break;
+    }
+
+    // ---- tiles to the RIGHT of right ----
+    for (CornerStitch* t = right->right(); t; t = t->bottom()) {
+        if (t->left() == right)
+            t->setLeft(left);
+        else
+            break;
+    }
+    cout << "Deleting Right: " << right << "\n";
+    dumpIncomingPointers(left,right);
     delete right;
     return true;
 }
 
 bool mergeVerticalOnce(CornerStitch* bottom) {
     if (!bottom) return false;
+
     CornerStitch* top = bottom->top();
     if (!top) return false;
-    if (!bottom->isSpace() || !top->isSpace()) return false;
-    if (bottom->getllx() != top->getllx() || bottom->geturx() != top->geturx()) return false;
+    if (top->bottom() != bottom) return false;
+    if (bottom->getAttr() != top->getAttr()) return false;
+    if (bottom->isSpace() != top->isSpace()) return false;
+    if (bottom->getllx() != top->getllx() ||
+        bottom->geturx() != top->geturx()) return false;
 
-    CornerStitch* topTop = top->top();
-    bottom->setTop(topTop);
-    if (topTop && topTop->bottom() == top) topTop->setBottom(bottom);
+    // 1. Fix outgoing pointers
+    bottom->setTop(top->top());
+    bottom->setRight(top->right());
 
-    // fix horizontal neighbors
-    if (top->left() && top->left()->right() == top) top->left()->setRight(bottom);
-    if (top->right() && top->right()->left() == top) top->right()->setLeft(bottom);
+    // ---- tiles above top ----
+    for (CornerStitch* t = top->top(); t; t = t->left()) {
+        if (t->bottom() == top)
+            t->setBottom(bottom);
+        else
+            break;
+    }
+    for (CornerStitch* t = top->top()->right(); t; t = t->right()) {
+        if (t->bottom() == top)
+            t->setBottom(bottom);
+        else
+            break;
+    }
 
+    // ---- tiles to left of top ----
+    for (CornerStitch* t = top->left(); t; t = t->top()) {
+        if (t->right() == top)
+            t->setRight(bottom);
+        else
+            break;
+    }
+
+    // ---- tiles to right of top ----
+    for (CornerStitch* t = top->right(); t; t = t->bottom()) {
+        if (t->left() == top)
+            t->setLeft(bottom);
+        else
+            break;
+    }
+    cout << "Deleting Top: " << top << "\n";
+    dumpIncomingPointers(bottom, top);
     delete top;
     return true;
 }
@@ -460,7 +718,8 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
 bool splitRightToMatchLeft(CornerStitch* anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
+    if (left->getAttr() != right->getAttr()) return false;
+    else if (left->isSpace() != right->isSpace()) return false;
 
     long ly = left->getlly();
     long uy = left->getury();
@@ -483,10 +742,13 @@ bool splitRightToMatchLeft(CornerStitch* anchor, CornerStitch* left, CornerStitc
 bool alignAndMergeAdjacent(CornerStitch* anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (!left->isSpace() || !right->isSpace()) return false;
+
+    if (left->getAttr() != right->getAttr()) return false;
+    else if (left->isSpace() != right->isSpace()) return false;
 
     // ensure right column has a slice that matches left's vertical span
     if (!splitRightToMatchLeft(anchor, left, right)) return false;
+
 
     // probe a point inside the matching vertical span, but inside the right column
     long probeX = right->getllx() + 1;
@@ -498,17 +760,20 @@ bool alignAndMergeAdjacent(CornerStitch* anchor, CornerStitch* left, CornerStitc
         matching = findTileContaining(anchor, probeX, probeY);
         if (!matching) return false;
     }
-
     // verify the found tile lives in right column and matches vertical span
     if (matching->getllx() != right->getllx() || matching->getlly() != left->getlly() || matching->getury() != left->getury())
         return false;
+
+
 
     // Now the tile immediately left of 'matching' should be a tile we can merge with.
     CornerStitch* leftOfMatching = matching->left();
     if (!leftOfMatching) return false;
 
+
+
     // If leftOfMatching exactly matches left's span and is space, do a single merge.
-    if (leftOfMatching->isSpace() && matching->isSpace() &&
+    if ((leftOfMatching->getAttr() == matching->getAttr()) && (leftOfMatching->isSpace() == matching->isSpace()) &&
         leftOfMatching->getlly() == matching->getlly() &&
         leftOfMatching->getury() == matching->getury()) {
         return mergeHorizontalOnce(leftOfMatching);
@@ -544,11 +809,13 @@ int passAlignAndMergeHorizontally(CornerStitch* anchor) {
     while (!dq.empty()) {
         CornerStitch* t = dq.front(); dq.pop_front();
         CornerStitch* r = t->right();
-        if (r && t->isSpace() && r->isSpace()) {
+        if (r) {
             if (alignAndMergeAdjacent(anchor, t, r)) {
                 ++merges;
-                // after merge t may have expanded; try merging t again immediately
-                dq.push_front(t);
+                seen.clear();
+                dq.clear();
+                dq.push_back(anchor);
+                seen.insert(anchor);
                 continue;
             }
         }
@@ -569,12 +836,15 @@ int passMergeVerticalSimple(CornerStitch* anchor) {
     dq.push_back(anchor);
     seen.insert(anchor);
     int merges = 0;
-
+    
     while (!dq.empty()) {
         CornerStitch* t = dq.front(); dq.pop_front();
         if (mergeVerticalOnce(t)) {
             ++merges;
-            dq.push_front(t);
+            seen.clear();
+            dq.clear();
+            dq.push_back(anchor);
+            seen.insert(anchor);
             continue;
         }
         CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
@@ -604,6 +874,7 @@ int coalesceAfterDeletion(CornerStitch* anchor, int maxRounds = 20) {
 bool deleteTileAndCoalesce(CornerStitch* anchor, CornerStitch* t) {
     if (!anchor || !t) return false;
     t->setSpace(1); // mark as free
+    t->setAttr(0);
     // try to merge/align until stable
     coalesceAfterDeletion(anchor, 50);
     return true;
@@ -618,6 +889,7 @@ bool deleteRectAndCoalesce(CornerStitch* anchor, long lx, long ly, long wx, long
         if (tt->getllx() >= lx && tt->getlly() >= ly &&
             tt->geturx() <= lx + wx && tt->getury() <= ly + wy) {
             tt->setSpace(1);
+            tt->setAttr(0);
         }
     }
     coalesceAfterDeletion(anchor, 50);
@@ -664,36 +936,6 @@ bool moveTile(
     return true;
 }
 
-enum LayerType {
-    L_NONE = 0,
-    L_NDIFF,
-    L_PDIFF,
-    L_NTRANS,
-    L_PTRANS,
-    L_POLY,
-    L_M2
-};
-#define L_PTR_LEFT   50
-#define L_PTR_RIGHT  51
-#define L_PTR_TOP    52
-#define L_PTR_BOTTOM 53
-
-
-string attrToLayer(unsigned int attr) {
-    switch (attr) {
-        case L_NDIFF:   return "ndiff";
-        case L_PDIFF:   return "pdiff";
-        case L_NTRANS:  return "ntransistor";
-        case L_PTRANS:  return "ptransistor";
-        case L_POLY:    return "polysilicon";
-        case L_M2:      return "m2";
-        case L_PTR_LEFT: return "left";
-        case L_PTR_RIGHT: return "right";
-        case L_PTR_TOP: return "top";
-        case L_PTR_BOTTOM: return "bottom";
-        default:        return "none";
-    }
-}
 
 
 void exportTiles(CornerStitch* anchor, const string& filename) {

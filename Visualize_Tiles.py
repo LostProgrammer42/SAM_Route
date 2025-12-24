@@ -9,7 +9,8 @@ plane_files = [
     # ("plane2.sam", 2),
 ]
 
-Tile_boundaries = False
+Tile_boundaries = True
+Tile_names = False
 # ---------- COLOR MAP ----------
 def layer_color(layer):
     layer = layer.lower()
@@ -70,7 +71,16 @@ for t in all_tiles:
         zorder=10 + t["plane"]   # higher plane on top
     )
     ax.add_patch(rect)
-
+    if Tile_names:
+        cx = t["llx"] + t["wx"] / 2
+        cy = t["lly"] + t["wy"] / 2
+        ax.text(
+            cx, cy, t["name"],
+            ha="center", va="center",
+            fontsize=7,
+            color="black",
+            zorder=30
+        )
     # draw net id (only if filled)
     if filled and t["net"] != 0:
         cx = t["llx"] + t["wx"] / 2
@@ -93,5 +103,4 @@ ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
 ax.set_xlim(min(xs) - 5, max(xs) + 5)
 ax.set_ylim(min(ys) - 5, max(ys) + 5)
 
-plt.savefig("Plane_0_Bloated.png")
 plt.show()

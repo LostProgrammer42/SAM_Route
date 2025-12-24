@@ -324,20 +324,9 @@ int main(int argc, char** argv){
                  << " (plane " << plane << "): "
                  << line << "\n";
         }
-        rects.push_back({
-        plane,
-        layer,
-        attr,
-        netId,
-        lx, ly, wx, wy
-        });
+        rects.push_back({plane,layer,attr,netId,lx, ly, wx, wy});
     }
 
-    // CornerStitch* poly = findTileContaining(planeRoots[0],38,7);
-    // if (poly->left())   {poly->left()->setAttr(L_PTR_LEFT); poly->left()->setSpace(0);}
-    // if (poly->right())  {poly->right()->setAttr(L_PTR_RIGHT); poly->right()->setSpace(0);}
-    // if (poly->top())    {poly->top()->setAttr(L_PTR_TOP); poly->top()->setSpace(0);}
-    // if (poly->bottom()) {poly->bottom()->setAttr(L_PTR_BOTTOM); poly->bottom()->setSpace(0);}
     for (auto& r : rects) {
         if (r.attr != L_POLY) continue;
 
@@ -382,15 +371,7 @@ int main(int argc, char** argv){
         long bloated_wx = r.wx + bl + br;
         long bloated_wy = r.wy + bb + bt;
 
-        bool ok = insertTileRect(
-            bloatedRoots[plane],
-            bloated_lx,
-            bloated_ly,
-            bloated_wx,
-            bloated_wy,
-            r.attr,
-            r.net
-        );
+        bool ok = insertTileRect(bloatedRoots[plane],bloated_lx,bloated_ly,bloated_wx,bloated_wy,r.attr,r.net);
 
         if (!ok) {
             cout << "Bloated insert failed for rect at ("
@@ -486,15 +467,7 @@ int main(int argc, char** argv){
                 if (!last)  yhi -= HALF;
 
                 if (yhi > ylo) {
-                    insertTileRect(
-                        planeRoots[0],
-                        x0 - HALF,
-                        ylo,
-                        POLY_W,
-                        yhi - ylo,
-                        L_POLY,
-                        net_route
-                    );
+                    insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
                 }
             } else {
                 // horizontal segment
@@ -505,15 +478,7 @@ int main(int argc, char** argv){
                 if (!last)  xhi -= HALF;
 
                 if (xhi > xlo) {
-                    insertTileRect(
-                        planeRoots[0],
-                        xlo,
-                        y0 - HALF,
-                        xhi - xlo,
-                        POLY_W,
-                        L_POLY,
-                        net_route
-                    );
+                    insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
                 }
             }
         }
@@ -529,18 +494,22 @@ int main(int argc, char** argv){
 
             if (!turn) continue;
 
-            insertTileRect(
-                planeRoots[0],
-                x - HALF,
-                y - HALF,
-                POLY_W,
-                POLY_W,
-                L_POLY,
-                net_route
-            );
+            insertTileRect(planeRoots[0],x - HALF,y - HALF,POLY_W,POLY_W,L_POLY,net_route);
         }
 
     }
+    cout << "BEFORE 1st DELETE\n";
+    deleteTileAndCoalesce(planeRoots[0], findTileContaining(planeRoots[0],42,13));
+    cout << "BEFORE 2nd DELETE\n";
+    deleteTileAndCoalesce(planeRoots[0], findTileContaining(planeRoots[0],32,13));
+
+
+    // CornerStitch* poly = findTileContaining(planeRoots[0],30,40);
+    
+    // if (poly->left())   {poly->left()->setAttr(L_PTR_LEFT); poly->left()->setSpace(0);}
+    // if (poly->right())  {poly->right()->setAttr(L_PTR_RIGHT); poly->right()->setSpace(0);}
+    // if (poly->top())    {poly->top()->setAttr(L_PTR_TOP); poly->top()->setSpace(0);}
+    // if (poly->bottom()) {poly->bottom()->setAttr(L_PTR_BOTTOM); poly->bottom()->setSpace(0);}
 
     cout << "\n=== PLANE " << 0 << " ===\n"; 
     exportTiles(planeRoots[0], "plane0_route.sam");
