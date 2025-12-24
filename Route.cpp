@@ -74,7 +74,7 @@ unsigned int layerToAttr(const string& layer) {
 }
 
 long layerBloat(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff") return 1;
+    if (layer == "ndiff" || layer == "pdiff") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 1;
     if (layer == "polysilicon") return 1;
     if (layer == "m2") return 0;
@@ -89,7 +89,8 @@ struct RectRec {
     long lx, ly, wx, wy;
 };
 
-vector<RectRec> rects;
+unordered_map<int, vector<RectRec>> rectsByLayer;
+
 
 int main(int argc, char** argv){
     if (argc < 2) {
@@ -127,14 +128,17 @@ int main(int argc, char** argv){
         unsigned int netId = getNetId(net);
         unsigned int attr = layerToAttr(layer);
 
+        cout <<lineNo <<endl;
         bool ok = insertTileRect(planeRoots[plane],lx, ly,wx, wy,attr,netId);
-        
-        if (!ok) {
+        bool ok1 = insertTileRect(bloatedRoots[plane],lx, ly,wx, wy,attr,netId);
+
+        if (!ok || !ok1) {
             cout << "Insert failed at line " << lineNo
                  << " (plane " << plane << "): "
                  << line << "\n";
         }
-        rects.push_back({
+        
+        rectsByLayer[attr].push_back({
         plane,
         layer,
         attr,
@@ -142,55 +146,79 @@ int main(int argc, char** argv){
         lx, ly, wx, wy
         });
     }
-
-    // CornerStitch* poly = findTileContaining(planeRoots[0],38,7);
-    // if (poly->left())   {poly->left()->setAttr(L_PTR_LEFT); poly->left()->setSpace(0);}
-    // if (poly->right())  {poly->right()->setAttr(L_PTR_RIGHT); poly->right()->setSpace(0);}
-    // if (poly->top())    {poly->top()->setAttr(L_PTR_TOP); poly->top()->setSpace(0);}
-    // if (poly->bottom()) {poly->bottom()->setAttr(L_PTR_BOTTOM); poly->bottom()->setSpace(0);}
     
-    for (const auto& r : rects) {
-        int plane = r.plane;
+    
+    
+    
+    vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
 
-        // find the exact tile that was inserted
-        CornerStitch* t = findTileContaining(
-            planeRoots[plane],
-            r.lx + 1,
-            r.ly + 1
-        );
-        if (!t) continue;
+    for(const auto layer : layers){
+        for (const auto& r : rectsByLayer[layerToAttr(layer)]) {
+            int plane = r.plane;
 
-        long b = layerBloat(r.layer);
+            // find the exact tile that was inserted
+            CornerStitch* t = findTileContaining(
+                bloatedRoots[plane],
+                r.lx + 1,
+                r.ly + 1
+            );
+            if (!t) continue;
 
-        long bl = 0, br = 0, bb = 0, bt = 0;
+            long b = layerBloat(r.layer);
 
-        // obstruction check uses FINAL normal layout
-        if (!t->left()   || t->left()->isSpace())   bl = b;
-        if (!t->right()  || t->right()->isSpace())  br = b;
-        if (!t->bottom() || t->bottom()->isSpace()) bb = b;
-        if (!t->top()    || t->top()->isSpace())    bt = b;
+            long bl = 0, br = 0, bb = 0, bt = 0;
 
-        long bloated_lx = r.lx - bl;
-        long bloated_ly = r.ly - bb;
-        long bloated_wx = r.wx + bl + br;
-        long bloated_wy = r.wy + bb + bt;
+            // obstruction check uses FINAL normal layout
+            if (!t->left()   || t->left()->isSpace())   bl = b;
+            if (!t->right()  || t->right()->isSpace())  br = b;
+            if (!t->bottom() || t->bottom()->isSpace()) bb = b;
+            if (!t->top()    || t->top()->isSpace())    bt = b;
 
-        bool ok = insertTileRect(
-            bloatedRoots[plane],
-            bloated_lx,
-            bloated_ly,
-            bloated_wx,
-            bloated_wy,
-            r.attr,
-            r.net
-        );
+            long bloated_lx = r.lx - bl;
+            long bloated_ly = r.ly - bb;
+            long bloated_wx = r.wx + bl + br;
+            long bloated_wy = r.wy + bb + bt;
 
-        if (!ok) {
-            cout << "Bloated insert failed for rect at ("
-                << r.lx << "," << r.ly << ")\n";
+            long llx = t->getllx();
+            long lly = t->getlly();
+            long urx = t->geturx();
+            long ury = t->getury();
+
+            
+            // ---- CLAMP INFINITE BOUNDS TO FINITE VALUES ----
+            if (llx == MIN_VALUE) llx = 0;
+            if (lly == MIN_VALUE) lly = 0;
+            if (urx == MAX_VALUE) urx = 60;
+            if (ury == MAX_VALUE) ury = 60;
+
+            long wx = urx - llx;
+            long wy = ury - lly;
+
+            bool filled = !t->isSpace();
+
+            
+
+
+           
+            deleteTileAndCoalesce(bloatedRoots[plane],t);
+            bool ok = insertTileRect(
+                bloatedRoots[plane],
+                bloated_lx,
+                bloated_ly,
+                bloated_wx,
+                bloated_wy,
+                r.attr,
+                r.net
+            );
+
+            if (!ok) {
+                cout << "Bloated insert failed for rect at ("
+                    << r.lx << "," << r.ly << ")\n";
+            }
+            //exportTiles(bloatedRoots[0], "plane0_bloated.sam");
         }
-    }
 
+    }
     
     cout << "\n=== PLANE " << 0 << " ===\n"; 
     exportTiles(planeRoots[0], "plane0.sam");
