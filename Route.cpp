@@ -215,7 +215,6 @@ int main(int argc, char** argv){
                 cout << "Bloated insert failed for rect at ("
                     << r.lx << "," << r.ly << ")\n";
             }
-            //exportTiles(bloatedRoots[0], "plane0_bloated.sam");
         }
 
     }
