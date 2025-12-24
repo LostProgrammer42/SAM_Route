@@ -498,10 +498,17 @@ int main(int argc, char** argv){
         }
 
     }
-    cout << "BEFORE 1st DELETE\n";
-    deleteTileAndCoalesce(planeRoots[0], findTileContaining(planeRoots[0],42,13));
-    cout << "BEFORE 2nd DELETE\n";
-    deleteTileAndCoalesce(planeRoots[0], findTileContaining(planeRoots[0],32,13));
+    for (const auto& r : rects) {
+        int plane = r.plane;
+
+        // find the exact tile that was inserted
+        CornerStitch* t = findTileContaining(
+            planeRoots[plane],
+            r.lx + 1,
+            r.ly + 1
+        );
+        deleteTileAndCoalesce(planeRoots[0],t);
+    }
 
 
     // CornerStitch* poly = findTileContaining(planeRoots[0],30,40);

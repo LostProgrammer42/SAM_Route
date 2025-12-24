@@ -678,7 +678,6 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
     // 1. Fix outgoing pointers
     bottom->setTop(top->top());
     bottom->setRight(top->right());
-
     // ---- tiles above top ----
     for (CornerStitch* t = top->top(); t; t = t->left()) {
         if (t->bottom() == top)
@@ -686,11 +685,13 @@ bool mergeVerticalOnce(CornerStitch* bottom) {
         else
             break;
     }
-    for (CornerStitch* t = top->top()->right(); t; t = t->right()) {
-        if (t->bottom() == top)
-            t->setBottom(bottom);
-        else
-            break;
+    if (top->top()){
+        for (CornerStitch* t = top->top()->right(); t; t = t->right()) {
+            if (t->bottom() == top)
+                t->setBottom(bottom);
+            else
+                break;
+        }
     }
 
     // ---- tiles to left of top ----
