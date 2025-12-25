@@ -1,4 +1,4 @@
-// Author: Stavan Mehta
+// Author: Stavan Mehta, Affaan Fakih
 // Version: Pilot Initial (V0)
 
 #include <bits/stdc++.h>
@@ -74,7 +74,7 @@ unsigned int layerToAttr(const string& layer) {
 }
 
 long layerBloat(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff") return 2;
+    if (layer == "ndiff" || layer == "pdiff") return 1;
     if (layer == "ntransistor" || layer == "ptransistor") return 1;
     if (layer == "polysilicon") return 1;
     if (layer == "m2") return 0;
@@ -148,6 +148,11 @@ int main(int argc, char** argv){
     }
     
     
+    // poly = findTileContaining(bloatedRoots[0],34,8);
+    // if (poly->left())   {poly->left()->setAttr(L_PTR_LEFT); poly->left()->setSpace(0);}
+    // if (poly->right())  {poly->right()->setAttr(L_PTR_RIGHT); poly->right()->setSpace(0);}
+    // if (poly->top())    {poly->top()->setAttr(L_PTR_TOP); poly->top()->setSpace(0);}
+    // if (poly->bottom()) {poly->bottom()->setAttr(L_PTR_BOTTOM); poly->bottom()->setSpace(0);}
     
     
     vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
@@ -166,52 +171,54 @@ int main(int argc, char** argv){
 
             long b = layerBloat(r.layer);
 
-            long bl = 0, br = 0, bb = 0, bt = 0;
+            bool ok1 = bloatByRect(t,b,b,b,b); 
+            
+            //long bl = 0, br = 0, bb = 0, bt = 0;
 
-            // obstruction check uses FINAL normal layout
-            if (!t->left()   || t->left()->isSpace())   bl = b;
-            if (!t->right()  || t->right()->isSpace())  br = b;
-            if (!t->bottom() || t->bottom()->isSpace()) bb = b;
-            if (!t->top()    || t->top()->isSpace())    bt = b;
+            // // obstruction check uses FINAL normal layout
+            // if (!t->left()   || t->left()->isSpace())   bl = b;
+            // if (!t->right()  || t->right()->isSpace())  br = b;
+            // if (!t->bottom() || t->bottom()->isSpace()) bb = b;
+            // if (!t->top()    || t->top()->isSpace())    bt = b;
 
-            long bloated_lx = r.lx - bl;
-            long bloated_ly = r.ly - bb;
-            long bloated_wx = r.wx + bl + br;
-            long bloated_wy = r.wy + bb + bt;
+            // long bloated_lx = r.lx - bl;
+            // long bloated_ly = r.ly - bb;
+            // long bloated_wx = r.wx + bl + br;
+            // long bloated_wy = r.wy + bb + bt;
 
-            long llx = t->getllx();
-            long lly = t->getlly();
-            long urx = t->geturx();
-            long ury = t->getury();
+            // long llx = t->getllx();
+            // long lly = t->getlly();
+            // long urx = t->geturx();
+            // long ury = t->getury();
 
             
-            // ---- CLAMP INFINITE BOUNDS TO FINITE VALUES ----
-            if (llx == MIN_VALUE) llx = 0;
-            if (lly == MIN_VALUE) lly = 0;
-            if (urx == MAX_VALUE) urx = 60;
-            if (ury == MAX_VALUE) ury = 60;
+            // // ---- CLAMP INFINITE BOUNDS TO FINITE VALUES ----
+            // if (llx == MIN_VALUE) llx = 0;
+            // if (lly == MIN_VALUE) lly = 0;
+            // if (urx == MAX_VALUE) urx = 60;
+            // if (ury == MAX_VALUE) ury = 60;
 
-            long wx = urx - llx;
-            long wy = ury - lly;
+            // long wx = urx - llx;
+            // long wy = ury - lly;
 
-            bool filled = !t->isSpace();
+            // bool filled = !t->isSpace();
 
             
 
 
            
-            deleteTileAndCoalesce(bloatedRoots[plane],t);
-            bool ok = insertTileRect(
-                bloatedRoots[plane],
-                bloated_lx,
-                bloated_ly,
-                bloated_wx,
-                bloated_wy,
-                r.attr,
-                r.net
-            );
+            // deleteTileAndCoalesce(bloatedRoots[plane],t);
+            // bool ok = insertTileRect(
+            //     bloatedRoots[plane],
+            //     bloated_lx,
+            //     bloated_ly,
+            //     bloated_wx,
+            //     bloated_wy,
+            //     r.attr,
+            //     r.net
+            // );
 
-            if (!ok) {
+            if (!ok1) {
                 cout << "Bloated insert failed for rect at ("
                     << r.lx << "," << r.ly << ")\n";
             }

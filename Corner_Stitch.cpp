@@ -96,7 +96,7 @@ class CornerStitch{
         CornerStitch* top()    const { return ur.y; }
 
         void setVirt(unsigned int v) { virt = v; }
-        void setSpace(unsigned int s) { space = s; if(s == 1) attr =0;}
+        void setSpace(unsigned int s) { space = s; if(s == 1) {attr = 0; net = 0;}}
         void setAttr(unsigned int a) { attr = a; }
         void setNet(unsigned int n) { net = n; }
         void setLeft(CornerStitch* L)   { ll.x = L; }
@@ -212,11 +212,11 @@ vector<CornerStitch*> rightNeighbors(CornerStitch* t) {
     if (!t) return result;
 
     long x = t->geturx() ;
-    long y0 = t->getlly()-10;
-    unsigned long h  = t->getury() +10- y0;
+    long y0 = t->getlly() ;
+    unsigned long h  = t->getury() - y0;
 
     // 1-unit wide vertical slab to the right
-    result = tilesInRect(t, x, y0, 10, h);
+    result = tilesInRect(t, x, y0, 1, h);
     return result;
 }
 
@@ -224,11 +224,11 @@ vector<CornerStitch*> leftNeighbors(CornerStitch* t) {
     vector<CornerStitch*> result;
     if (!t) return result;
 
-    long x = t->getllx() - 10;
-    long y0 = t->getlly()-10;
-    unsigned long h  = t->getury() +10- y0;
+    long x = t->getllx() - 1;
+    long y0 = t->getlly();
+    unsigned long h  = t->getury() - y0;
 
-    result = tilesInRect(t, x, y0, 10, h);
+    result = tilesInRect(t, x, y0, 1, h);
     return result;
 }
 
@@ -237,10 +237,10 @@ vector<CornerStitch*> topNeighbors(CornerStitch* t) {
     if (!t) return result;
 
     long y = t->getury();
-    long x0 = t->getllx()-10;
-    unsigned long w  = t->geturx() +10- x0;
+    long x0 = t->getllx();
+    unsigned long w  = t->geturx() - x0;
 
-    result = tilesInRect(t, x0, y, w, 10);
+    result = tilesInRect(t, x0, y, w, 1);
     return result;
 }
 
@@ -248,11 +248,11 @@ vector<CornerStitch*> bottomNeighbors(CornerStitch* t) {
     vector<CornerStitch*> result;
     if (!t) return result;
 
-    long y = t->getlly() - 10;
-    long x0 = t->getllx()-10;
-    unsigned long w  = t->geturx() +10- x0;
+    long y = t->getlly() - 1;
+    long x0 = t->getllx();
+    unsigned long w  = t->geturx() - x0;
 
-    result = tilesInRect(t, x0, y, w, 10);
+    result = tilesInRect(t, x0, y, w, 1);
     return result;
 }
 
@@ -437,6 +437,7 @@ bool mergeHorizontalOnce(CornerStitch* left,  CornerStitch* &anchor) {
     if (!left) return false;
     CornerStitch* right = left->right();
     if (!right) return false;
+    if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
     if (left->getlly() != right->getlly() || left->getury() != right->getury()) return false;
@@ -474,6 +475,7 @@ bool mergeVerticalOnce(CornerStitch* bottom, CornerStitch* &anchor){
     if (!bottom) return false;
     CornerStitch* top = bottom->top();
     if (!top) return false;
+    if (bottom->getNet() != top->getNet()) return false;    
     if (bottom->getAttr() != top->getAttr()) return false;
     if (bottom->isSpace() != top->isSpace()) return false;
     if (bottom->getllx() != top->getllx() || bottom->geturx() != top->geturx()) return false;
@@ -510,6 +512,7 @@ bool mergeVerticalOnce(CornerStitch* bottom, CornerStitch* &anchor){
 bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
+    if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
     long ly = left->getlly();
@@ -521,11 +524,11 @@ bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStit
     if (ly == right->getlly() && uy == right->getury()) return true;
 
     // Split right column only where required
-    if (right->getlly() < ly && ly < right->getury()) {
+    if (right->getlly() <= ly && ly <= right->getury()) {
         if (!splitHorizontalEdge(anchor, ly, x0, x1)) return false;
     }
     else return false;
-    if (right->getlly() < uy && uy < right->getury()) {
+    if (right->getlly() <= uy && uy <= right->getury()) {
         if (!splitHorizontalEdge(anchor, uy, x0, x1)) return false;
     }
     else return false;
@@ -535,14 +538,15 @@ bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStit
 bool alignAndMergeAdjacent(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
+    if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
     // ensure right column has a slice that matches left's vertical span
     if (!splitRightToMatchLeft(anchor, left, right)) return false;
 
     // probe a point inside the matching vertical span, but inside the right column
-    long probeX = right->getllx() + 1;
-    long probeY = left->getlly() + 1;
+    long probeX = right->getllx() + 0.1;
+    long probeY = left->getlly() + 0.1;
     CornerStitch* matching = findTileContaining(anchor, probeX, probeY);
     if (!matching) {
         // try nudging probe a bit to the right
@@ -576,8 +580,7 @@ bool alignAndMergeAdjacent(CornerStitch* &anchor, CornerStitch* left, CornerStit
     }
     if (!cur) return false;
     // cur->right() == matching means cur is immediately to left of matching
-    if (cur->isSpace() && matching->isSpace() &&
-        cur->getlly() == matching->getlly() && cur->getury() == matching->getury()) {
+    if (cur->getlly() == matching->getlly() && cur->getury() == matching->getury()) {
         return mergeHorizontalOnce(cur, anchor);
     }
     return false;
@@ -717,6 +720,31 @@ bool insertTileRect(CornerStitch* &anchor,
     }
 
     coalesce(anchor,50);
+    return true;
+}
+
+bool bloatByRect(CornerStitch* &t, unsigned long drc_right=0, unsigned long drc_left=0, unsigned long drc_bottom=0, unsigned long drc_top=0){
+    if(!t) return false;
+    if(drc_right == 0 && drc_left == 0 && drc_bottom == 0 && drc_top == 0) return true;
+    long urx=t->geturx(), ury=t->getury(), llx=t->getllx(), lly=t->getlly();
+    Rectangle* probeR = new Rectangle(urx, lly - drc_bottom, drc_right, ury + drc_top - lly + drc_bottom);
+    Rectangle* probeL = new Rectangle(llx - drc_left, lly - drc_bottom, drc_left, ury + drc_top - lly + drc_bottom);
+    Rectangle* probeT = new Rectangle(llx, ury, urx - llx, drc_top);
+    Rectangle* probeB = new Rectangle(llx, lly - drc_bottom, urx - llx, drc_top);
+
+    for(auto probe : {probeR,probeL,probeT,probeB}){
+        if (!splitHorizontalEdge(t, probe->lly(), probe->llx(), probe->llx() + probe->wx())) return false;
+        if (!splitHorizontalEdge(t, probe->lly() + probe->wy(), probe->llx(), probe->llx() + probe->wx())) return false;
+        if (!splitVerticalEdge(t, probe->llx(), probe->lly(), probe->lly() + probe->wy())) return false;
+        if (!splitVerticalEdge(t, probe->llx() + probe->wx(), probe->lly(), probe->lly() + probe->wy())) return false;
+        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),probe->wx(),probe->wy())){
+            if(!tile || !tile->isSpace()) continue;
+            tile->setSpace(0);
+            tile->setAttr(t->getAttr());
+            tile->setNet(t->getNet());
+        }
+    }
+    coalesce(t,50);
     return true;
 }
 
