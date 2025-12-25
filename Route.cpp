@@ -90,7 +90,6 @@ struct RectRec {
 };
 
 vector<RectRec> rects;
-unordered_map<unsigned int, vector<CornerStitch*>> polyByNet;
 
 struct Port {
     long x, y;
@@ -229,8 +228,18 @@ bool tryVHV(
     Port t,
     vector<pair<long,long>>& path
 ) {
+  
     const long HALF = 1;
-
+    //Horizontal path check 
+    if (s.y == t.y) {
+        if (segmentClear(bloatedRoot, s.x, s.y, t.x, t.y, HALF)) {
+            path = {
+                {s.x, s.y},
+                {t.x, t.y}
+            };
+            return true;
+        }
+    }
     long yb, yt;
     if (!verticalChannel(bloatedRoot, s.x, s.y, yb, yt, HALF))
         return false;
@@ -319,6 +328,49 @@ struct RoutePair {
     unsigned int net;
 };
 
+void rebuildRectsByLayer(
+    CornerStitch* root,
+    unordered_map<int, vector<RectRec>>& rectsByLayer
+) {
+    rectsByLayer.clear();
+
+    unordered_set<CornerStitch*> seen;
+    deque<CornerStitch*> dq;
+    dq.push_back(root);
+    seen.insert(root);
+
+    while (!dq.empty()) {
+        CornerStitch* t = dq.front(); dq.pop_front();
+        if (!t) continue;
+
+        if (!t->isSpace()) {
+            long llx = t->getllx();
+            long lly = t->getlly();
+            long urx = t->geturx();
+            long ury = t->getury();
+
+            rectsByLayer[t->getAttr()].push_back({
+                0,                              // plane
+                attrToLayer(t->getAttr()),      // layer string
+                t->getAttr(),
+                t->getNet(),
+                llx,
+                lly,
+                urx - llx,
+                ury - lly
+            });
+        }
+
+        CornerStitch* nbrs[4] = {
+            t->left(), t->right(), t->bottom(), t->top()
+        };
+        for (auto nb : nbrs) {
+            if (nb && seen.insert(nb).second)
+                dq.push_back(nb);
+        }
+    }
+}
+
 int main(int argc, char** argv){
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect>\n";
@@ -370,202 +422,275 @@ int main(int argc, char** argv){
     }
 
     exportTiles(planeRoots[0], "plane0.sam");
-    vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
-    
-    for (auto& [attr, rects] : rectsByLayer) {
-        if (attr != L_POLY) continue;
-
-        for (auto& r : rects) {
-            CornerStitch* t = findTileContaining(
-                planeRoots[r.plane],
-                r.lx + 1,
-                r.ly + 1
-            );
-            if (t && !t->isSpace()) {
-                polysByNet[t->getNet()].push_back(t);
-            }
-        }
-    }
-    vector<RoutePair> routePairs;
-
-    // TEMP: just pair polys sequentially per net
-    for (auto& [net, polys] : polysByNet) {
-        if (polys.size() < 2) continue;
-        if (net == getNetId("#")) continue;
-        for (int i = 0; i + 1 < polys.size(); i += 2) {
-            routePairs.push_back({polys[i], polys[i+1], net});
-        }
-    }
-    for (int rp = 0; rp < routePairs.size(); rp++) {
-        auto& rpair = routePairs[rp];
-        CornerStitch* src = rpair.src;
-        CornerStitch* dst = rpair.dst;
-
-        unsigned int net_route = rpair.net;
-        deleteRectAndCoalesce(bloatedRoots[0],0,0,200,200);
-        // Initial bloated plane = exact copy of planeRoots
+    int MAX_ITERS = 2;
+    int iter = 0;
+    while(true){
+        cout << "Iteration: " << iter + 1 << " \n"; 
+        if (iter ++ > MAX_ITERS) {cout << "Max Iterations Reached\n"; break;}
         for (auto& [attr, rects] : rectsByLayer) {
+            if (attr != L_POLY) continue;
+
             for (auto& r : rects) {
-                insertTileRect(
-                    bloatedRoots[r.plane],
-                    r.lx, r.ly, r.wx, r.wy,
-                    r.attr, r.net
-                );
-            }
-        }
-        coalesceAfterDeletion(bloatedRoots[0], 50);
-        //Bloating
-        for(const auto layer : layers){
-            for (const auto& r : rectsByLayer[layerToAttr(layer)]) {
-                int plane = r.plane;
-
-                // find the exact tile that was inserted
                 CornerStitch* t = findTileContaining(
-                    bloatedRoots[plane],
-                    r.lx + 0.1,
-                    r.ly + 0.1
+                    planeRoots[r.plane],
+                    r.lx + 1,
+                    r.ly + 1
                 );
-                CornerStitch* src_in_bloated_plane = findTileContaining(
-                    bloatedRoots[plane],
-                    src->getllx() + 0.1,
-                    src->getlly() + 0.1
-                );
-                
-                CornerStitch* dst_in_bloated_plane = findTileContaining(
-                    bloatedRoots[plane],
-                    dst->getllx() + 0.1,
-                    dst->getlly() + 0.1
-                );
-                
-                if (!t) continue;
-                if (t == src_in_bloated_plane || t == dst_in_bloated_plane) continue;
-                long b = layerBloat(r.layer);
-                bool ok1 = bloatByRect(t,b,b,b,b); 
-                
-                if (!ok1) {cout << "Bloating Failed\n";}
-            }
-            coalesceAfterDeletion(bloatedRoots[0],50);
-
-        }
-        exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_2.sam");
-        
-
-        //Routing
-
-        auto srcPorts = getPolyPorts(src, bloatedRoots[0]);
-        auto dstPorts = getPolyPorts(dst, bloatedRoots[0]);
-        cout << "\n=== SRC PORTS ===\n";
-        for (int i = 0; i < srcPorts.size(); i++) {
-            cout << "S" << i << ": (" << srcPorts[i].x
-                << "," << srcPorts[i].y << ")\n";
-        }
-
-        cout << "\n=== DST PORTS ===\n";
-        for (int i = 0; i < dstPorts.size(); i++) {
-            cout << "D" << i << ": (" << dstPorts[i].x
-                << "," << dstPorts[i].y << ")\n";
-        }
-
-        bool routed = false;
-        vector<pair<long,long>> bestRoute;
-        long bestCost = LONG_MAX;
-        int attempt = 0;
-        for (auto& sp : srcPorts) {
-            for (auto& dp : dstPorts) {
-                attempt++;
-                cout << "\n--- TRY " << attempt << " ---\n";
-                cout << "SRC: (" << sp.x << "," << sp.y << ") ";
-                cout << "DST: (" << dp.x << "," << dp.y << ")\n";
-
-                vector<pair<long,long>> trialRoute;
-                if (tryVHV(bloatedRoots[0], sp, dp, trialRoute)){
-                    compressRoute(trialRoute);
-                    linearizeRoot(trialRoute);
-                    cout << "Route points (" << trialRoute.size() << "):\n";
-                    for (int i = 0; i < trialRoute.size(); i++) {
-                        cout << "  P" << i << ": (" << trialRoute[i].first << ","<< trialRoute[i].second << ")\n";
-                    }
-
-                    long c = routeCost(trialRoute);
-                    if (c < bestCost) {
-                        bestCost = c;
-                        bestRoute = trialRoute;
-                        routed = true;
-                    }
+                if (t && !t->isSpace()) {
+                    polysByNet[t->getNet()].push_back(t);
                 }
             }
         }
-
-        if (!routed) {
-            cout << "Routing failed for net " << net_route << "\n";
-        }
-        else{
-            const long POLY_W = 2;
-            const long HALF = POLY_W / 2;
-            compressRoute(bestRoute);
-            linearizeRoot(bestRoute);
-            cout << "Best Route points (" << bestRoute.size() << "):\n";
-                    for (int i = 0; i < bestRoute.size(); i++) {
-                        cout << "  P" << i << ": (" << bestRoute[i].first << ","<< bestRoute[i].second << ")\n";
-                    }
-            for (int i = 1; i + 1 < bestRoute.size(); i++) {
-                auto [x_prev, y_prev] = bestRoute[i-1];
-                auto [x, y]           = bestRoute[i];
-                auto [x_next, y_next] = bestRoute[i+1];
-
-                // Only if direction changes (i.e., a bend)
-                bool turn =
-                    (x_prev == x && y_next == y) ||
-                    (y_prev == y && x_next == x);
-
-                if (!turn) continue;
-
-                insertTileRect(planeRoots[0],x - HALF,y - HALF,POLY_W,POLY_W,L_POLY,net_route);
-                rectsByLayer[L_POLY].push_back({0,attrToLayer(L_POLY),L_POLY,net_route,x - HALF, y-HALF, POLY_W, POLY_W});
-
+        vector<RoutePair> routePairs;
+        vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
+        vector<unsigned int> toErase;
+        for(auto& [net, polys]: polysByNet){
+            if (net == getNetId("#")) continue;
+            if(WholeNetElectricallyConnected(polys)){
+                cout << "Net: " << net << " fully routed\n";
+                toErase.push_back(net);
             }
+        }
 
-            for (int i = 1; i < bestRoute.size(); i++) {
-                auto [x0, y0] = bestRoute[i-1];
-                auto [x1, y1] = bestRoute[i];
+        for(unsigned int net: toErase){
+            polysByNet.erase(net);
+        }
+        if(polysByNet.size() == 1){break;}
 
-                bool first = (i == 1);
-                bool last  = (i == bestRoute.size() - 1);
+        // TEMP: just pair polys sequentially per net
+        for (auto& [net, polys] : polysByNet) {
+            if (polys.size() < 2) continue;
+            if (net == getNetId("#")) continue;
+            sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() < b->getllx();});
 
-                if (x0 == x1) {
-                    // vertical segment
-                    long ylo = min(y0, y1);
-                    long yhi = max(y0, y1);
-
-                    if (!first) ylo += HALF;
-                    if (!last)  yhi -= HALF;
-
-                    if (yhi > ylo) {
-                        insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
-                        rectsByLayer[L_POLY].push_back({0,attrToLayer(L_POLY),L_POLY,net_route,x0-HALF, ylo, POLY_W, yhi-ylo});
-
-                    }
-                } else {
-                    // horizontal segment
-                    long xlo = min(x0, x1);
-                    long xhi = max(x0, x1);
-
-                    if (!first) xlo += HALF;
-                    if (!last)  xhi -= HALF;
-
-                    if (xhi > xlo) {
-                        insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
-                        rectsByLayer[L_POLY].push_back({0,attrToLayer(L_POLY),L_POLY,net_route,xlo, y0-HALF, xhi-xlo, POLY_W});
-
-                    }
+            if (iter <= 1){
+                for (int i = 0; i + 1 < polys.size(); i += 2) {
+                    routePairs.push_back({polys[i], polys[i+1], net});
                 }
             }
+            else{
+                vector<CornerStitch*> connected;
+                vector<CornerStitch*> unconnected = polys;
+
+                // choose anchor (leftmost poly is a good default)
+                auto anchor = *min_element(unconnected.begin(), unconnected.end(),
+                    [](CornerStitch* a, CornerStitch* b) {
+                        return a->getllx() < b->getllx();
+                    });
+
+                connected.push_back(anchor);
+                unconnected.erase(
+                    remove(unconnected.begin(), unconnected.end(), anchor),
+                    unconnected.end()
+                );
+
+                while (!unconnected.empty()) {
+                    CornerStitch* bestSrc = nullptr;
+                    CornerStitch* bestDst = nullptr;
+                    long bestCost = LONG_MAX;
+
+                    for (auto* s : connected) {
+                        for (auto* d : unconnected) {
+                            long cx1 = (s->getllx() + s->geturx()) / 2;
+                            long cy1 = (s->getlly() + s->getury()) / 2;
+                            long cx2 = (d->getllx() + d->geturx()) / 2;
+                            long cy2 = (d->getlly() + d->getury()) / 2;
+
+                            long cost = llabs(cx1 - cx2) + llabs(cy1 - cy2);
+                            if (cost < bestCost) {
+                                bestCost = cost;
+                                bestSrc = s;
+                                bestDst = d;
+                            }
+                        }
+                    }
+
+                    // route bestSrc → bestDst
+                    routePairs.push_back({bestSrc, bestDst, net});
+
+                    connected.push_back(bestDst);
+                    unconnected.erase(
+                        remove(unconnected.begin(), unconnected.end(), bestDst),
+                        unconnected.end()
+                    );
+                }
+            }
+
+        }
+        for (int rp = 0; rp < routePairs.size(); rp++) {
+            auto& rpair = routePairs[rp];
+            CornerStitch* src = rpair.src;
+            CornerStitch* dst = rpair.dst;
+
+            unsigned int net_route = rpair.net;
+            deleteRectAndCoalesce(bloatedRoots[0],0,0,200,200);
+            // Initial bloated plane = exact copy of planeRoots
+            for (auto& [attr, rects] : rectsByLayer) {
+                for (auto& r : rects) {
+                    insertTileRect(
+                        bloatedRoots[r.plane],
+                        r.lx, r.ly, r.wx, r.wy,
+                        r.attr, r.net
+                    );
+                }
+            }
+            coalesceAfterDeletion(bloatedRoots[0], 50);
+            exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_1.sam");
+            //Bloating
+            for(const auto layer : layers){
+                for (const auto& r : rectsByLayer[layerToAttr(layer)]) {
+                    int plane = r.plane;
+
+                    // find the exact tile that was inserted
+                    CornerStitch* t = findTileContaining(
+                        bloatedRoots[plane],
+                        r.lx + 0.1,
+                        r.ly + 0.1
+                    );
+                    CornerStitch* src_in_bloated_plane = findTileContaining(
+                        bloatedRoots[plane],
+                        src->getllx() + 0.1,
+                        src->getlly() + 0.1
+                    );
+                    
+                    CornerStitch* dst_in_bloated_plane = findTileContaining(
+                        bloatedRoots[plane],
+                        dst->getllx() + 0.1,
+                        dst->getlly() + 0.1
+                    );
+                    
+                    if (!t) continue;
+                    if (t == src_in_bloated_plane || t == dst_in_bloated_plane) continue;
+                    long b = layerBloat(r.layer);
+                    bool ok1 = bloatByRect(t,b,b,b,b); 
+                    
+                    if (!ok1) {cout << "Bloating Failed\n";}
+                }
+                coalesceAfterDeletion(bloatedRoots[0],50);
+
+            }
+            exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_2.sam");
             
 
-        }
-        coalesceAfterDeletion(planeRoots[0]);
-        exportTiles(planeRoots[0], "plane0_route.sam");
+            //Routing
 
+            auto srcPorts = getPolyPorts(src, bloatedRoots[0]);
+            auto dstPorts = getPolyPorts(dst, bloatedRoots[0]);
+            cout << "\n=== SRC PORTS ===\n";
+            for (int i = 0; i < srcPorts.size(); i++) {
+                cout << "S" << i << ": (" << srcPorts[i].x
+                    << "," << srcPorts[i].y << ")\n";
+            }
+
+            cout << "\n=== DST PORTS ===\n";
+            for (int i = 0; i < dstPorts.size(); i++) {
+                cout << "D" << i << ": (" << dstPorts[i].x
+                    << "," << dstPorts[i].y << ")\n";
+            }
+
+            bool routed = false;
+            vector<pair<long,long>> bestRoute;
+            long bestCost = LONG_MAX;
+            int attempt = 0;
+            for (auto& sp : srcPorts) {
+                for (auto& dp : dstPorts) {
+                    attempt++;
+                    cout << "\n--- TRY " << attempt << " ---\n";
+                    cout << "SRC: (" << sp.x << "," << sp.y << ") ";
+                    cout << "DST: (" << dp.x << "," << dp.y << ")\n";
+
+                    vector<pair<long,long>> trialRoute;
+                    if (tryVHV(bloatedRoots[0], sp, dp, trialRoute)){
+                        compressRoute(trialRoute);
+                        linearizeRoot(trialRoute);
+                        cout << "Route points (" << trialRoute.size() << "):\n";
+                        for (int i = 0; i < trialRoute.size(); i++) {
+                            cout << "  P" << i << ": (" << trialRoute[i].first << ","<< trialRoute[i].second << ")\n";
+                        }
+
+                        long c = routeCost(trialRoute);
+                        if (c < bestCost) {
+                            bestCost = c;
+                            bestRoute = trialRoute;
+                            routed = true;
+                        }
+                    }
+                }
+            }
+
+            if (!routed) {
+                cout << "Routing failed for net " << net_route << "\n";
+            }
+            else{
+                const long POLY_W = 2;
+                const long HALF = POLY_W / 2;
+                compressRoute(bestRoute);
+                linearizeRoot(bestRoute);
+                cout << "Best Route points (" << bestRoute.size() << "):\n";
+                        for (int i = 0; i < bestRoute.size(); i++) {
+                            cout << "  P" << i << ": (" << bestRoute[i].first << ","<< bestRoute[i].second << ")\n";
+                        }
+                for (int i = 1; i + 1 < bestRoute.size(); i++) {
+                    auto [x_prev, y_prev] = bestRoute[i-1];
+                    auto [x, y]           = bestRoute[i];
+                    auto [x_next, y_next] = bestRoute[i+1];
+
+                    // Only if direction changes (i.e., a bend)
+                    bool turn =
+                        (x_prev == x && y_next == y) ||
+                        (y_prev == y && x_next == x);
+
+                    if (!turn) continue;
+
+                    insertTileRect(planeRoots[0],x - HALF,y - HALF,POLY_W,POLY_W,L_POLY,net_route);
+
+                }
+
+                for (int i = 1; i < bestRoute.size(); i++) {
+                    auto [x0, y0] = bestRoute[i-1];
+                    auto [x1, y1] = bestRoute[i];
+
+                    bool first = (i == 1);
+                    bool last  = (i == bestRoute.size() - 1);
+
+                    if (x0 == x1) {
+                        // vertical segment
+                        long ylo = min(y0, y1);
+                        long yhi = max(y0, y1);
+
+                        if (!first) ylo += HALF;
+                        if (!last)  yhi -= HALF;
+
+                        if (yhi > ylo) {
+                            insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
+
+                        }
+                    } else {
+                        // horizontal segment
+                        long xlo = min(x0, x1);
+                        long xhi = max(x0, x1);
+
+                        if (!first) xlo += HALF;
+                        if (!last)  xhi -= HALF;
+
+                        if (xhi > xlo) {
+                            insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
+
+                        }
+                    }
+                }
+                
+
+            }
+            coalesceAfterDeletion(planeRoots[0]);
+            rebuildRectsByLayer(planeRoots[0], rectsByLayer);
+            polysByNet.clear();
+            exportTiles(planeRoots[0], "plane0_route.sam");
+
+        }
     }
+    exportTiles(planeRoots[0], "plane0_route.sam");
+    
+
     return 0;
 }

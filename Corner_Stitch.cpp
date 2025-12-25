@@ -968,39 +968,48 @@ bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
     if (a->isSpace() || b->isSpace()) return false;
     if (a->getNet() != b->getNet()) return false;
 
-    // a right touches b left
-    if (a->right() == b) {
-        long overlap =
-            min(a->getury(), b->getury()) -
-            max(a->getlly(), b->getlly());
-        return overlap > 0;
+    long ax0 = a->getllx();
+    long ay0 = a->getlly();
+    long ax1 = a->geturx();
+    long ay1 = a->getury();
+
+    long bx0 = b->getllx();
+    long by0 = b->getlly();
+    long bx1 = b->geturx();
+    long by1 = b->getury();
+
+    // Touch OR overlap in X
+    bool xTouch = !(ax1 < bx0 || bx1 < ax0);
+    // Touch OR overlap in Y
+    bool yTouch = !(ay1 < by0 || by1 < ay0);
+
+    return xTouch && yTouch;
+}
+
+
+bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
+    if (polys.empty()) return true;
+
+    unordered_set<CornerStitch*> visited;
+    deque<CornerStitch*> q;
+
+    q.push_back(polys[0]);
+    visited.insert(polys[0]);
+
+    while (!q.empty()) {
+        CornerStitch* cur = q.front();
+        q.pop_front();
+
+        for (CornerStitch* other : polys) {
+            if (visited.count(other)) continue;
+            if (!electricallyAdjacent(cur, other)) continue;
+
+            visited.insert(other);
+            q.push_back(other);
+        }
     }
 
-    // a left touches b right
-    if (a->left() == b) {
-        long overlap =
-            min(a->getury(), b->getury()) -
-            max(a->getlly(), b->getlly());
-        return overlap > 0;
-    }
-
-    // a top touches b bottom
-    if (a->top() == b) {
-        long overlap =
-            min(a->geturx(), b->geturx()) -
-            max(a->getllx(), b->getllx());
-        return overlap > 0;
-    }
-
-    // a bottom touches b top
-    if (a->bottom() == b) {
-        long overlap =
-            min(a->geturx(), b->geturx()) -
-            max(a->getllx(), b->getllx());
-        return overlap > 0;
-    }
-
-    return false;
+    return visited.size() == polys.size();
 }
 
 
