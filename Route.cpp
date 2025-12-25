@@ -6,12 +6,15 @@
 using namespace std;
 
 int layerToPlane(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff" ||
+    if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion" ||
         layer == "ntransistor" || layer == "ptransistor")
         return 0; // diffusion, devices
 
     if (layer == "polysilicon")
         return 0    ; // poly
+    
+    if (layer == "m1")
+        return 1;    
 
     if (layer == "m2")
         return 2; // metal
@@ -19,17 +22,22 @@ int layerToPlane(const string& layer) {
     return -1; 
 }
 
+unordered_map<string, string> ioMap;
 unordered_map<string, unsigned int> netMap;
+vector<string> netList = {"#"};
 unsigned int nextNetId = 1;
 
 unsigned int getNetId(const string& net) {
+    if (net == "#") return 0;
     if (netMap.count(net)) return netMap[net];
     netMap[net] = nextNetId;
+    netList.push_back(net);
     return nextNetId++;
 }
 
 bool parseRectLine(
     const string& line,
+    string& inout,
     string& net,
     string& layer,
     long& lx, long& ly,
@@ -46,7 +54,7 @@ bool parseRectLine(
 
     if (kind != "rect" && kind != "inrect" && kind != "outrect")
         return false;
-
+    inout = kind;
     ss >> net >> layer >> x1 >> y1 >> x2 >> y2;
     if (!ss) return false;
 
@@ -64,19 +72,21 @@ bool parseRectLine(
 
 
 unsigned int layerToAttr(const string& layer) {
-    if (layer == "ndiff")        return L_NDIFF;
-    if (layer == "pdiff")        return L_PDIFF;
+    if (layer == "ndiff" || layer == "ndiffusion") return L_NDIFF;
+    if (layer == "pdiff" || layer == "pdiffusion") return L_PDIFF;
     if (layer == "ntransistor")  return L_NTRANS;
     if (layer == "ptransistor")  return L_PTRANS;
     if (layer == "polysilicon")  return L_POLY;
+    if (layer == "m1")           return L_M1;    
     if (layer == "m2")           return L_M2;
     return L_NONE;
 }
 
 long layerBloat(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff") return 1;
+    if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 1;
     if (layer == "ntransistor" || layer == "ptransistor") return 1;
     if (layer == "polysilicon") return 1;
+    if (layer == "m1") return 0;
     if (layer == "m2") return 0;
     return 0;
 }
@@ -89,8 +99,68 @@ struct RectRec {
     long lx, ly, wx, wy;
 };
 
-unordered_map<int, vector<RectRec>> rectsByLayer;
+void exportRect(vector<CornerStitch*> &anchors, const string& filename) {
+    const long VIS_MIN = 0;   // visualization clamp
+    const long VIS_MAX = 60;
+    ofstream fout(filename);
+    if (!fout) return;
+    fout << "bbox " << VIS_MIN << " " << VIS_MIN << " " << VIS_MAX << " " << VIS_MAX << "\n";
+    for(auto anchor : anchors){
+        if (!anchor) continue; 
 
+        
+
+        unordered_set<CornerStitch*> seen;
+        deque<CornerStitch*> dq;
+        vector<CornerStitch*> tiles;
+
+        dq.push_back(anchor);
+        seen.insert(anchor);
+        while (!dq.empty()) {
+            CornerStitch* t = dq.front(); dq.pop_front();
+
+            tiles.push_back(t);
+
+            CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
+            for (auto nb : nbrs) {
+                if (!nb) continue;
+                if (seen.insert(nb).second) dq.push_back(nb);
+            }
+        }
+        
+        for (size_t i = 0; i < tiles.size(); i++) {
+            CornerStitch* t = tiles[i];
+            if(t->isSpace()) continue;
+            long llx = t->getllx();
+            long lly = t->getlly();
+            long urx = t->geturx();
+            long ury = t->getury();
+
+            // ---- CLAMP INFINITE BOUNDS TO FINITE VALUES ----
+            if (llx == MIN_VALUE) llx = VIS_MIN;
+            if (lly == MIN_VALUE) lly = VIS_MIN;
+            if (urx == MAX_VALUE) urx = VIS_MAX;
+            if (ury == MAX_VALUE) ury = VIS_MAX;
+
+            string net = netList[t->getNet()];
+            string inout = ((t->getAttr()==L_M2) || (t->getAttr()==L_M1)) ? ioMap[net] : "rect";
+
+            bool filled = !t->isSpace();
+
+            fout << inout << " "
+                << net << " "
+                << attrToLayer(t->getAttr()) << " "
+                << llx << " "
+                << lly << " "
+                << urx << " "
+                << ury << " "
+                << "\n";
+
+        }
+    }
+}
+
+unordered_map<int, vector<RectRec>> rectsByLayer;
 
 int main(int argc, char** argv){
     if (argc < 2) {
@@ -110,25 +180,24 @@ int main(int argc, char** argv){
         planeRoots[i] = new CornerStitch(0, 0);
         bloatedRoots[i] = new CornerStitch(0, 0);
     }
-
+    vector <CornerStitch*> rootsVector ={bloatedRoots[0],bloatedRoots[1],bloatedRoots[2]};
     string line;
     int lineNo = 0;
     while (getline(fin, line)) {
         lineNo++;
 
-        string net, layer;
+        string net, layer, inout;
         long lx, ly, wx, wy;
 
-        if (!parseRectLine(line, net, layer, lx, ly, wx, wy))
+        if (!parseRectLine(line, inout,net, layer, lx, ly, wx, wy))
             continue;
-
+        ioMap[net] = inout;
         int plane = layerToPlane(layer);
         if (plane < 0) continue; // skip unknown layers
 
         unsigned int netId = getNetId(net);
         unsigned int attr = layerToAttr(layer);
 
-        cout <<lineNo <<endl;
         bool ok = insertTileRect(planeRoots[plane],lx, ly,wx, wy,attr,netId);
         bool ok1 = insertTileRect(bloatedRoots[plane],lx, ly,wx, wy,attr,netId);
 
@@ -172,51 +241,6 @@ int main(int argc, char** argv){
             long b = layerBloat(r.layer);
 
             bool ok1 = bloatByRect(t,b,b,b,b); 
-            
-            //long bl = 0, br = 0, bb = 0, bt = 0;
-
-            // // obstruction check uses FINAL normal layout
-            // if (!t->left()   || t->left()->isSpace())   bl = b;
-            // if (!t->right()  || t->right()->isSpace())  br = b;
-            // if (!t->bottom() || t->bottom()->isSpace()) bb = b;
-            // if (!t->top()    || t->top()->isSpace())    bt = b;
-
-            // long bloated_lx = r.lx - bl;
-            // long bloated_ly = r.ly - bb;
-            // long bloated_wx = r.wx + bl + br;
-            // long bloated_wy = r.wy + bb + bt;
-
-            // long llx = t->getllx();
-            // long lly = t->getlly();
-            // long urx = t->geturx();
-            // long ury = t->getury();
-
-            
-            // // ---- CLAMP INFINITE BOUNDS TO FINITE VALUES ----
-            // if (llx == MIN_VALUE) llx = 0;
-            // if (lly == MIN_VALUE) lly = 0;
-            // if (urx == MAX_VALUE) urx = 60;
-            // if (ury == MAX_VALUE) ury = 60;
-
-            // long wx = urx - llx;
-            // long wy = ury - lly;
-
-            // bool filled = !t->isSpace();
-
-            
-
-
-           
-            // deleteTileAndCoalesce(bloatedRoots[plane],t);
-            // bool ok = insertTileRect(
-            //     bloatedRoots[plane],
-            //     bloated_lx,
-            //     bloated_ly,
-            //     bloated_wx,
-            //     bloated_wy,
-            //     r.attr,
-            //     r.net
-            // );
 
             if (!ok1) {
                 cout << "Bloated insert failed for rect at ("
@@ -239,7 +263,7 @@ int main(int argc, char** argv){
 
     cout << "\n=== BLOATED PLANE " << 1 << " ===\n"; 
     exportTiles(bloatedRoots[1], "plane1_bloated.sam");
-    
+    exportRect(rootsVector,"INVX8_bloat.rect");
 
     return 0;
 }

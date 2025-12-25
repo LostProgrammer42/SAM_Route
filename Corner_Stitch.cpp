@@ -105,11 +105,11 @@ class CornerStitch{
         void setTop(CornerStitch* T)    { ur.y = T; }
         
 
-        bool containsPoint(long x, long y) const {
+        bool containsPoint(float x, float y) const {
             return (getllx() <= x && x < geturx() && getlly() <= y && y < getury());
         }
 
-        bool intersectsRect(long lx, long ly, unsigned long wx, unsigned long wy) const {
+        bool intersectsRect(float lx, float ly, float wx, float wy) const {
             if (geturx() <= lx) return false;
             if (lx + wx <= getllx()) return false;
             if (getury() <= ly) return false;
@@ -123,7 +123,7 @@ class CornerStitch{
 // Finds the tile that contains point (x,y)
 // anchor: any known tile (commonly a root/sentinel)
 // Returns pointer to the containing CornerStitch, or nullptr if not found
-CornerStitch* findTileContaining(CornerStitch *anchor, long x, long y) {
+CornerStitch* findTileContaining(CornerStitch *anchor, float x, float y) {
     if (!anchor) return nullptr;
 
     if (anchor->containsPoint(x,y)) return anchor;
@@ -167,8 +167,8 @@ CornerStitch* findTileContaining(CornerStitch *anchor, long x, long y) {
 }
 
 vector<CornerStitch*> tilesInRect(CornerStitch* anchor,
-                                  long lx, long ly,
-                                  unsigned long wx, unsigned long wy)
+                                  float lx, float ly,
+                                  float wx, float wy)
 {
     vector<CornerStitch*> result;
     if (!anchor) return result;
@@ -793,6 +793,7 @@ enum LayerType {
     L_NTRANS,
     L_PTRANS,
     L_POLY,
+    L_M1,
     L_M2
 };
 #define L_PTR_LEFT   50
@@ -803,17 +804,18 @@ enum LayerType {
 
 string attrToLayer(unsigned int attr) {
     switch (attr) {
-        case L_NDIFF:   return "ndiff";
-        case L_PDIFF:   return "pdiff";
-        case L_NTRANS:  return "ntransistor";
-        case L_PTRANS:  return "ptransistor";
-        case L_POLY:    return "polysilicon";
-        case L_M2:      return "m2";
-        case L_PTR_LEFT: return "left";
-        case L_PTR_RIGHT: return "right";
-        case L_PTR_TOP: return "top";
-        case L_PTR_BOTTOM: return "bottom";
-        default:        return "none";
+        case L_NDIFF:       return "ndiff";
+        case L_PDIFF:       return "pdiff";
+        case L_NTRANS:      return "ntransistor";
+        case L_PTRANS:      return "ptransistor";
+        case L_POLY:        return "polysilicon";
+        case L_M1:          return "m1";
+        case L_M2:          return "m2";
+        case L_PTR_LEFT:    return "left";
+        case L_PTR_RIGHT:   return "right";
+        case L_PTR_TOP:     return "top";
+        case L_PTR_BOTTOM:  return "bottom";
+        default:            return "none";
     }
 }
 
@@ -821,8 +823,8 @@ string attrToLayer(unsigned int attr) {
 void exportTiles(CornerStitch* &anchor, const string& filename) {
     if (!anchor) { cout << "[]\n"; return; }
 
-    const long VIS_MIN = -60;   // visualization clamp
-    const long VIS_MAX =  60;
+    const long VIS_MIN = -100;   // visualization clamp
+    const long VIS_MAX =  100;
 
     unordered_set<CornerStitch*> seen;
     deque<CornerStitch*> dq;
