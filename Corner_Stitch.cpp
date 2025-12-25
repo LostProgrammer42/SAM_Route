@@ -963,12 +963,52 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
     return true;
 }
 
+bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
+    if (!a || !b) return false;
+    if (a->isSpace() || b->isSpace()) return false;
+    if (a->getNet() != b->getNet()) return false;
+
+    // a right touches b left
+    if (a->right() == b) {
+        long overlap =
+            min(a->getury(), b->getury()) -
+            max(a->getlly(), b->getlly());
+        return overlap > 0;
+    }
+
+    // a left touches b right
+    if (a->left() == b) {
+        long overlap =
+            min(a->getury(), b->getury()) -
+            max(a->getlly(), b->getlly());
+        return overlap > 0;
+    }
+
+    // a top touches b bottom
+    if (a->top() == b) {
+        long overlap =
+            min(a->geturx(), b->geturx()) -
+            max(a->getllx(), b->getllx());
+        return overlap > 0;
+    }
+
+    // a bottom touches b top
+    if (a->bottom() == b) {
+        long overlap =
+            min(a->geturx(), b->geturx()) -
+            max(a->getllx(), b->getllx());
+        return overlap > 0;
+    }
+
+    return false;
+}
+
 
 void exportTiles(CornerStitch* anchor, const string& filename, bool showInTerminal = false) {
     if (!anchor) { cout << "[]\n"; return; }
 
-    const long VIS_MIN = -60;   // visualization clamp
-    const long VIS_MAX =  60;
+    const long VIS_MIN = -80;   // visualization clamp
+    const long VIS_MAX =  80;
 
     unordered_set<CornerStitch*> seen;
     deque<CornerStitch*> dq;
