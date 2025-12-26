@@ -128,42 +128,21 @@ CornerStitch* findTileContaining(CornerStitch *anchor, float x, float y) {
 
     if (anchor->containsPoint(x,y)) return anchor;
 
-    // Heuristic: walk left to get nearer horizontally (if possible)
     CornerStitch *cur = anchor;
-    while (true) {
-        CornerStitch *L = cur->left();
-        if (!L) break;
-        // only move left if that tile's llx is <= x and strictly less than cur's llx
-        long Lllx = L->getllx();
-        if (Lllx <= x && Lllx < cur->getllx()) cur = L;
-        else break;
-    }
 
-    // Scan right along the row using right() pointers
-    for (CornerStitch *row = cur; row; row = row->right()) {
-        // check vertical span first
-        if (row->getlly() <= y && y < row->getury()) {
-            if (row->containsPoint(x,y)) return row;
+    while(cur && !cur->containsPoint(x,y)){
+        while(cur && !(cur->getllx() <= x && x < cur->geturx())){
+            if(x >= cur->geturx()) cur = cur->right();
+            else if(x < cur->getllx()) cur = cur->left();     
+            else break;       
         }
-        // if we've passed x, stop this row scan
-        if (row->getllx() > x) break;
-    }
-    unordered_set<CornerStitch*> seen;
-    deque<CornerStitch*> dq;
-    dq.push_back(anchor);
-    seen.insert(anchor);
-
-    while (!dq.empty()) {
-        CornerStitch *t = dq.front(); dq.pop_front();
-        if (t->containsPoint(x,y)) return t;
-
-        CornerStitch *nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
-        for (auto nb : nbrs) {
-            if (!nb) continue;
-            if (seen.insert(nb).second) dq.push_back(nb);
+        while(cur && !(cur->getlly() <= y && y < cur->getury())){
+            if(y >= cur->getury()) cur = cur->top();
+            else if(y < cur->getlly()) cur = cur->bottom();         
+            else break;   
         }
     }
-    return nullptr; // not found (point outside tiled area or graph broken)
+    return cur;
 }
 
 vector<CornerStitch*> tilesInRect(CornerStitch* anchor,
@@ -196,6 +175,11 @@ vector<CornerStitch*> tilesInRect(CornerStitch* anchor,
 
         // Explore neighbors
         CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
+        if(t->getllx() <= lx && lx < t->geturx())           nbrs[0] = nullptr;
+        if(t->getllx() <= (lx+wx) && (lx+wx) < t->geturx()) nbrs[1] = nullptr;
+        if(t->getlly() <= ly && ly < t->getury())           nbrs[2] = nullptr;
+        if(t->getlly() <= (ly+wy) && (ly+wy) < t->getury()) nbrs[3] = nullptr;
+
         for (auto nb : nbrs) {
             if (!nb) continue;
             if (seen.insert(nb).second) {

@@ -99,14 +99,14 @@ struct RectRec {
     long lx, ly, wx, wy;
 };
 
-void exportRect(vector<CornerStitch*> &anchors, const string& filename) {
+void exportRect(CornerStitch* anchors[3], const string& filename) {
     const long VIS_MIN = 0;   // visualization clamp
     const long VIS_MAX = 60;
     ofstream fout(filename);
     if (!fout) return;
     fout << "bbox " << VIS_MIN << " " << VIS_MIN << " " << VIS_MAX << " " << VIS_MAX << "\n";
-    for(auto anchor : anchors){
-        if (!anchor) continue; 
+    for(int i=0; i<3; i++){
+        if (!anchors[i]) continue; 
 
         
 
@@ -114,12 +114,11 @@ void exportRect(vector<CornerStitch*> &anchors, const string& filename) {
         deque<CornerStitch*> dq;
         vector<CornerStitch*> tiles;
 
-        dq.push_back(anchor);
-        seen.insert(anchor);
+        dq.push_back(anchors[i]);
+        seen.insert(anchors[i]);
         while (!dq.empty()) {
             CornerStitch* t = dq.front(); dq.pop_front();
-
-            tiles.push_back(t);
+            if(!t->isSpace()) tiles.push_back(t);
 
             CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
             for (auto nb : nbrs) {
@@ -263,7 +262,7 @@ int main(int argc, char** argv){
 
     cout << "\n=== BLOATED PLANE " << 1 << " ===\n"; 
     exportTiles(bloatedRoots[1], "plane1_bloated.sam");
-    exportRect(rootsVector,"INVX8_bloat.rect");
+    exportRect(bloatedRoots,"INVX8_bloat.rect");
 
     return 0;
 }
