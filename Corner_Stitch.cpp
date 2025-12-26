@@ -983,7 +983,41 @@ bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
     // Touch OR overlap in Y
     bool yTouch = !(ay1 < by0 || by1 < ay0);
 
-    return xTouch && yTouch;
+    if (xTouch && yTouch)
+        return true;
+    
+    unordered_set<CornerStitch*> visited;
+    deque<CornerStitch*> q;
+
+    q.push_back(a);
+    visited.insert(a);
+
+    while (!q.empty()) {
+        CornerStitch* cur = q.front();
+        q.pop_front();
+
+        if (cur == b)
+            return true;
+
+        CornerStitch* nbrs[4] = {
+            cur->left(),
+            cur->right(),
+            cur->top(),
+            cur->bottom()
+        };
+
+        for (CornerStitch* n : nbrs) {
+            if (!n) continue;
+            if (n->isSpace()) continue;
+            if (n->getNet() != a->getNet()) continue;
+
+            if (visited.insert(n).second) {
+                q.push_back(n);
+            }
+        }
+    }
+
+    return false;
 }
 
 

@@ -517,7 +517,9 @@ int main(int argc, char** argv){
     exportTiles(planeRoots[0], "plane0.sam");
     int MAX_ITERS = 8;
     int iter = 0;
+    int noProgressIters = 0;
     while(true){
+        bool anyRouteInsertedThisIter = false;
         cout << "Iteration: " << iter + 1 << " \n"; 
         if (iter ++ > MAX_ITERS) {cout << "Max Iterations Reached\n"; break;}
         for (auto& [attr, rects] : rectsByLayer) {
@@ -598,19 +600,6 @@ int main(int argc, char** argv){
                 }
                 continue;
             }
-
-            // ---------- ITERATION == 3 : Normal X-Sorted POly Selection ----------
-            // if (iter >= 3 && iter%2 == 1){
-            //     sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() > b->getllx();});
-            //     for (int i = 0; i + 1 < polys.size(); i += 2) {
-            //             routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[i+1]->getllx(), polys[i+1]->getlly(), net});
-            //     }
-            // }
-            // // ---------- ITERATION == 4 : Normal Reverse X-Sorted POly Selection ----------
-            // sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() < b->getllx();});
-            // for (int i = 0; i + 1 < polys.size(); i += 2) {
-            //         routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[i+1]->getllx(), polys[i+1]->getlly(), net});
-            // }
 
             // ---------- ITERATION >= 3 : CENTER-BASED CONNECT ----------
             vector<CornerStitch*> connected;
@@ -729,9 +718,12 @@ int main(int argc, char** argv){
             
 
             //Routing
-
-            auto srcPorts = getPolyPorts(src, bloatedRoots[0], iter > 4);
-            auto dstPorts = getPolyPorts(dst, bloatedRoots[0], iter > 4);
+            bool useExtraPorts = (noProgressIters >= 2) || (iter > 8);
+            if (useExtraPorts) {
+               cout << "[INFO] Using multi-sampled ports due to stagnation\n";
+            }
+            auto srcPorts = getPolyPorts(src, bloatedRoots[0], useExtraPorts);
+            auto dstPorts = getPolyPorts(dst, bloatedRoots[0], useExtraPorts);
             cout << "\n=== SRC PORTS ===\n";
             for (int i = 0; i < srcPorts.size(); i++) {
                 cout << "S" << i << ": (" << srcPorts[i].x
@@ -787,6 +779,7 @@ int main(int argc, char** argv){
                 cout << "Routing failed for net " << net_route << "\n";
             }
             else{
+                anyRouteInsertedThisIter = true;
                 const long POLY_W = 2;
                 const long HALF = POLY_W / 2;
                 compressRoute(bestRoute);
@@ -875,6 +868,12 @@ int main(int argc, char** argv){
             exportTiles(planeRoots[0], "plane0_route.sam");
 
         }
+        if (anyRouteInsertedThisIter) {
+            noProgressIters = 0;
+        } else {
+            noProgressIters++;
+        }
+        cout << "[DEBUG] noProgressIters = " << noProgressIters << "\n";
     }
     exportTiles(planeRoots[0], "plane0_route.sam");
     
