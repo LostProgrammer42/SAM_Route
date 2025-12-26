@@ -230,16 +230,47 @@ bool tryVHV(
 ) {
   
     const long HALF = 1;
-    //Horizontal path check 
+    // 1. Straight horizontal
     if (s.y == t.y) {
         if (segmentClear(bloatedRoot, s.x, s.y, t.x, t.y, HALF)) {
-            path = {
-                {s.x, s.y},
-                {t.x, t.y}
-            };
+            path = { {s.x, s.y}, {t.x, t.y} };
             return true;
         }
     }
+
+    // 2. Straight vertical
+    if (s.x == t.x) {
+        if (segmentClear(bloatedRoot, s.x, s.y, t.x, t.y, HALF)) {
+            path = { {s.x, s.y}, {t.x, t.y} };
+            return true;
+        }
+    }
+
+    // 3. H -> V (one bend)
+    if (segmentClear(bloatedRoot, s.x, s.y, t.x, s.y, HALF) &&
+        segmentClear(bloatedRoot, t.x, s.y, t.x, t.y, HALF)) {
+
+        path = {
+            {s.x, s.y},
+            {t.x, s.y},
+            {t.x, t.y}
+        };
+        return true;
+    }
+
+    // 4. V -> H (one bend)
+    if (segmentClear(bloatedRoot, s.x, s.y, s.x, t.y, HALF) &&
+        segmentClear(bloatedRoot, s.x, t.y, t.x, t.y, HALF)) {
+
+        path = {
+            {s.x, s.y},
+            {s.x, t.y},
+            {t.x, t.y}
+        };
+        return true;
+    }
+
+    //5. V -> H -> V
     long yb, yt;
     if (!verticalChannel(bloatedRoot, s.x, s.y, yb, yt, HALF))
         return false;
@@ -371,6 +402,7 @@ void rebuildRectsByLayer(
     }
 }
 
+
 int main(int argc, char** argv){
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect>\n";
@@ -462,7 +494,8 @@ int main(int argc, char** argv){
             if (polys.size() < 2) continue;
             if (net == getNetId("#")) continue;
             sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() < b->getllx();});
-
+            
+            // For Initial Iterations Just 
             if (iter <= 1){
                 for (int i = 0; i + 1 < polys.size(); i += 2) {
                     routePairs.push_back({polys[i], polys[i+1], net});
@@ -630,6 +663,57 @@ int main(int argc, char** argv){
                         for (int i = 0; i < bestRoute.size(); i++) {
                             cout << "  P" << i << ": (" << bestRoute[i].first << ","<< bestRoute[i].second << ")\n";
                         }
+                vector<bool> isBend(bestRoute.size(), false);
+
+                for (int i = 1; i + 1 < bestRoute.size(); i++) {
+                    auto [x0,y0] = bestRoute[i-1];
+                    auto [x1,y1] = bestRoute[i];
+                    auto [x2,y2] = bestRoute[i+1];
+
+                    if ((x0 == x1 && y1 == y2) ||
+                        (y0 == y1 && x1 == x2)) {
+                        isBend[i] = true;
+                    }
+                }
+
+                for (int i = 1; i < bestRoute.size(); i++) {
+                    auto [x0, y0] = bestRoute[i-1];
+                    auto [x1, y1] = bestRoute[i];
+
+                    
+                    bool trimStart = (i > 1 && isBend[i-1]);
+                    bool trimEnd   = (i < bestRoute.size()-1 && isBend[i]);
+
+                    if (x0 == x1) {
+                        // vertical segment
+                        long ylo = min(y0, y1);
+                        long yhi = max(y0, y1);
+                        if (y1 < y0){
+                            if (trimEnd) ylo += HALF;
+                            if (trimStart)  yhi -= HALF;
+                        }
+                        else{
+                            if (trimStart) ylo += HALF;
+                            if (trimEnd)  yhi -= HALF;
+                        }
+                        if (yhi > ylo) {
+                            insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
+
+                        }
+                    } else {
+                        // horizontal segment
+                        long xlo = min(x0, x1);
+                        long xhi = max(x0, x1);
+
+                        if (trimStart) xlo += HALF;
+                        if (trimEnd)  xhi -= HALF;
+
+                        if (xhi > xlo) {
+                            insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
+
+                        }
+                    }
+                }
                 for (int i = 1; i + 1 < bestRoute.size(); i++) {
                     auto [x_prev, y_prev] = bestRoute[i-1];
                     auto [x, y]           = bestRoute[i];
@@ -644,40 +728,6 @@ int main(int argc, char** argv){
 
                     insertTileRect(planeRoots[0],x - HALF,y - HALF,POLY_W,POLY_W,L_POLY,net_route);
 
-                }
-
-                for (int i = 1; i < bestRoute.size(); i++) {
-                    auto [x0, y0] = bestRoute[i-1];
-                    auto [x1, y1] = bestRoute[i];
-
-                    bool first = (i == 1);
-                    bool last  = (i == bestRoute.size() - 1);
-
-                    if (x0 == x1) {
-                        // vertical segment
-                        long ylo = min(y0, y1);
-                        long yhi = max(y0, y1);
-
-                        if (!first) ylo += HALF;
-                        if (!last)  yhi -= HALF;
-
-                        if (yhi > ylo) {
-                            insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
-
-                        }
-                    } else {
-                        // horizontal segment
-                        long xlo = min(x0, x1);
-                        long xhi = max(x0, x1);
-
-                        if (!first) xlo += HALF;
-                        if (!last)  xhi -= HALF;
-
-                        if (xhi > xlo) {
-                            insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
-
-                        }
-                    }
                 }
                 
 

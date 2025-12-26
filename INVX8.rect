@@ -12,6 +12,7 @@ rect Y pdiff 31 30 37 50 center
 rect # polysilicon 29 6 31 8
 rect # ntransistor 29 8 31 18
 rect A polysilicon 29 18 31 20
+rect A polysilicon 61 14 63 16
 rect A polysilicon 29 28 31 30
 rect # ptransistor 29 30 31 50
 rect # polysilicon 29 50 31 52
