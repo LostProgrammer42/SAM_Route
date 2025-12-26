@@ -6,7 +6,7 @@
 using namespace std;
 
 int layerToPlane(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff" ||
+    if (layer == "ndiff"  || layer == "pdiff" ||
         layer == "ntransistor" || layer == "ptransistor")
         return 0; // diffusion, devices
 
@@ -90,14 +90,16 @@ struct RectRec {
 };
 
 vector<RectRec> rects;
-
+enum Dir { LEFT, RIGHT, UP, DOWN };
 struct Port {
     long x, y;
+    Dir normal;
 };
 
 vector<Port> getPolyPorts(
     CornerStitch* t,              // NORMAL plane tile
-    CornerStitch* bloatedRoot      // BLOATED plane root
+    CornerStitch* bloatedRoot ,     // BLOATED plane root
+    bool multiSample 
 ) {
     vector<Port> ports;
 
@@ -111,59 +113,62 @@ vector<Port> getPolyPorts(
 
     auto freeInBloated = [&](long x, long y) {
         CornerStitch* b = findTileContaining(bloatedRoot, x, y);
-        return b && b->isSpace();
+        if (!b) return false;
+        if (b->isSpace()) return true;
+        return (b->getNet() == t->getNet());  // allow same-net adjacency
     };
 
+
     // LEFT port
-    if (freeInBloated(lx - 1, cy))
-        ports.push_back({lx, cy});
+    if (freeInBloated(lx - 0.1, cy))
+        ports.push_back({lx, cy, LEFT});
 
     // RIGHT port
-    if (freeInBloated(rx + 1, cy))
-        ports.push_back({rx, cy});
+    if (freeInBloated(rx + 0.1, cy))
+        ports.push_back({rx, cy, RIGHT});
 
     // BOTTOM port
-    if (freeInBloated(cx, ly - 1))
-        ports.push_back({cx, ly});
+    if (freeInBloated(cx, ly - 0.1))
+        ports.push_back({cx, ly, DOWN});
 
     // TOP port
-    if (freeInBloated(cx, ry + 1))
-        ports.push_back({cx, ry});
+    if (freeInBloated(cx, ry + 0.1))
+        ports.push_back({cx, ry, UP});
+    
+    if(!multiSample)
+        return ports;
+    
+    long w = rx - lx;
+    long h = ry - ly;
+
+    // Conservative sample count
+    int NSx = max(1L, min(w / 4, 4L));
+    int NSy = max(1L, min(h / 4, 4L));
+
+    // LEFT / RIGHT edges (sample Y)
+    for (int i = 1; i <= NSy; i++) {
+        long y = ly + (i * h) / (NSy + 1);
+
+        if (freeInBloated(lx - 1, y))
+            ports.push_back({lx, y, LEFT});
+
+        if (freeInBloated(rx + 1, y))
+            ports.push_back({rx, y, RIGHT});
+    }
+
+    // TOP / BOTTOM edges (sample X)
+    for (int i = 1; i <= NSx; i++) {
+        long x = lx + (i * w) / (NSx + 1);
+
+        if (freeInBloated(x, ly - 1))
+            ports.push_back({x, ly, DOWN});
+
+        if (freeInBloated(x, ry + 1))
+            ports.push_back({x, ry, UP});
+    }
 
     return ports;
 }
-bool segmentClear(
-    CornerStitch* bloatedRoot,
-    long x0, long y0,
-    long x1, long y1,
-    long halfWidth
-) {
-    if (x0 == x1) {
-        // vertical segment
-        long lx = x0 - halfWidth;
-        long rx = x0 + halfWidth;
-        long ly = min(y0, y1);
-        long ry = max(y0, y1);
-
-        auto tiles = tilesInRect(bloatedRoot, lx, ly, rx - lx, ry - ly);
-        for (auto t : tiles)
-            if (!t->isSpace())
-                return false;
-    } else {
-        // horizontal segment
-        long ly = y0 - halfWidth;
-        long ry = y0 + halfWidth;
-        long lx = min(x0, x1);
-        long rx = max(x0, x1);
-
-        auto tiles = tilesInRect(bloatedRoot, lx, ly, rx - lx, ry - ly);
-        for (auto t : tiles)
-            if (!t->isSpace())
-                return false;
-    }
-    return true;
-}
-
 bool horizontalChannel(
     CornerStitch* bloatedRoot,
     long y,
@@ -179,7 +184,6 @@ bool horizontalChannel(
     while (true) {
         CornerStitch* t = findTileContaining(bloatedRoot, xl - 1, y);
         if (!t || !t->isSpace()) break;
-        if (!segmentClear(bloatedRoot, xl - 1, y, xl - 1, y, halfW)) break;
         xl = t->getllx();
     }
 
@@ -187,7 +191,6 @@ bool horizontalChannel(
     while (true) {
         CornerStitch* t = findTileContaining(bloatedRoot, xr + 1, y);
         if (!t || !t->isSpace()) break;
-        if (!segmentClear(bloatedRoot, xr + 1, y, xr + 1, y, halfW)) break;
         xr = t->geturx();
     }
 
@@ -208,14 +211,12 @@ bool verticalChannel(
     while (true) {
         CornerStitch* t = findTileContaining(bloatedRoot, x, yb - 1);
         if (!t || !t->isSpace()) break;
-        if (!segmentClear(bloatedRoot, x, yb - 1, x, yb - 1, halfW)) break;
         yb = t->getlly();
     }
 
     while (true) {
         CornerStitch* t = findTileContaining(bloatedRoot, x, yt + 1);
         if (!t || !t->isSpace()) break;
-        if (!segmentClear(bloatedRoot, x, yt + 1, x, yt + 1, halfW)) break;
         yt = t->getury();
     }
 
@@ -226,30 +227,43 @@ bool tryVHV(
     CornerStitch* bloatedRoot,
     Port s,
     Port t,
-    vector<pair<long,long>>& path
+    vector<pair<long,long>>& path,
+    unsigned int net
 ) {
-  
-    const long HALF = 1;
+    auto isFree = [&](long x, long y) {
+        CornerStitch* tile = findTileContaining(bloatedRoot, x, y);
+        if (!tile) return false;
+
+        // Space is always free
+        if (tile->isSpace()) return true;
+
+        // Same-net obstacles are allowed
+        if (tile->getNet() == net) return true;
+
+        return false;
+    };
+
+    cout << "Trying Straight Horizontal\n";
     // 1. Straight horizontal
     if (s.y == t.y) {
-        if (segmentClear(bloatedRoot, s.x, s.y, t.x, t.y, HALF)) {
+        if (isFree((s.x + t.x) / 2, s.y)) {
             path = { {s.x, s.y}, {t.x, t.y} };
             return true;
         }
     }
 
+    cout << "Trying Straight Vertical\n";
     // 2. Straight vertical
     if (s.x == t.x) {
-        if (segmentClear(bloatedRoot, s.x, s.y, t.x, t.y, HALF)) {
+        if (isFree(s.x, (s.y + t.y) / 2)) {
             path = { {s.x, s.y}, {t.x, t.y} };
             return true;
         }
     }
 
-    // 3. H -> V (one bend)
-    if (segmentClear(bloatedRoot, s.x, s.y, t.x, s.y, HALF) &&
-        segmentClear(bloatedRoot, t.x, s.y, t.x, t.y, HALF)) {
-
+    cout << "Trying HV \n";
+    // 3. H → V
+    if (isFree(t.x, s.y) && isFree(t.x, t.y)) {
         path = {
             {s.x, s.y},
             {t.x, s.y},
@@ -258,10 +272,9 @@ bool tryVHV(
         return true;
     }
 
-    // 4. V -> H (one bend)
-    if (segmentClear(bloatedRoot, s.x, s.y, s.x, t.y, HALF) &&
-        segmentClear(bloatedRoot, s.x, t.y, t.x, t.y, HALF)) {
-
+    cout << "Trying VH\n";
+    // 4. V → H
+    if (isFree(s.x, t.y) && isFree(t.x, t.y)) {
         path = {
             {s.x, s.y},
             {s.x, t.y},
@@ -270,9 +283,10 @@ bool tryVHV(
         return true;
     }
 
-    //5. V -> H -> V
+    cout << "Trying VHV\n";
+    // 5. V → H → V (use vertical channel)
     long yb, yt;
-    if (!verticalChannel(bloatedRoot, s.x, s.y, yb, yt, HALF))
+    if (!verticalChannel(bloatedRoot, s.x, s.y, yb, yt, 0))
         return false;
 
     vector<long> ys = {
@@ -281,26 +295,59 @@ bool tryVHV(
         t.y
     };
 
-    for (long ybnd : ys) {
-        if (ybnd < yb || ybnd > yt) continue;
+    for (long y : ys) {
+        if (y < yb || y > yt) continue;
 
-        if (!segmentClear(bloatedRoot, s.x, s.y, s.x, ybnd, HALF))
-            continue;
-        if (!segmentClear(bloatedRoot, s.x, ybnd, t.x, ybnd, HALF))
-            continue;
-        if (!segmentClear(bloatedRoot, t.x, ybnd, t.x, t.y, HALF))
-            continue;
+        if (isFree(s.x, y) &&
+            isFree((s.x + t.x) / 2, y) &&
+            isFree(t.x, y)) {
 
-        path = {
-            {s.x, s.y},
-            {s.x, ybnd},
-            {t.x, ybnd},
-            {t.x, t.y}
+            path = {
+                {s.x, s.y},
+                {s.x, y},
+                {t.x, y},
+                {t.x, t.y}
+            };
+            return true;
+        }
+    }   
+
+    cout << "Trying HVH\n";
+    long xl, xr;
+    // 6. H → V → H
+
+    if (horizontalChannel(bloatedRoot, s.y, s.x, xl, xr, 0)) {
+
+        // candidate x-bends
+        vector<long> xs = {
+            (xl + xr) / 2,
+            s.x,
+            t.x
         };
-        return true;
+
+        for (long x : xs) {
+            if (x < xl || x > xr) continue;
+
+            CornerStitch* a = findTileContaining(bloatedRoot, x, s.y);
+            CornerStitch* b = findTileContaining(bloatedRoot, x, t.y);
+            CornerStitch* c = findTileContaining(bloatedRoot, t.x, t.y);
+
+            if (!a || !b || !c) continue;
+            if (!a->isSpace() || !b->isSpace() || !c->isSpace()) continue;
+
+            path = {
+                {s.x, s.y},
+                {x, s.y},
+                {x, t.y},
+                {t.x, t.y}
+            };
+            return true;
+        }
     }
+
     return false;
 }
+
 
 long routeCost(const vector<pair<long,long>>& r) {
     long cost = 0;
@@ -354,10 +401,24 @@ unordered_map<int, vector<RectRec>> rectsByLayer;
 unordered_map<unsigned int, vector<CornerStitch*>> polysByNet;
 
 struct RoutePair {
-    CornerStitch* src;
-    CornerStitch* dst;
+    long src_x, src_y;
+    long dst_x, dst_y;
     unsigned int net;
 };
+
+bool checkPortAndRouteNormal(const Port& p,
+                        const pair<long,long>& next) {
+    long dx = next.first  - p.x;
+    long dy = next.second - p.y;
+
+    switch (p.normal) {
+        case LEFT:  return dx < 0;
+        case RIGHT: return dx > 0;
+        case UP:    return dy > 0;
+        case DOWN:  return dy < 0;
+    }
+    return false;
+}
 
 void rebuildRectsByLayer(
     CornerStitch* root,
@@ -454,7 +515,7 @@ int main(int argc, char** argv){
     }
 
     exportTiles(planeRoots[0], "plane0.sam");
-    int MAX_ITERS = 2;
+    int MAX_ITERS = 8;
     int iter = 0;
     while(true){
         cout << "Iteration: " << iter + 1 << " \n"; 
@@ -489,72 +550,134 @@ int main(int argc, char** argv){
         }
         if(polysByNet.size() == 1){break;}
 
-        // TEMP: just pair polys sequentially per net
         for (auto& [net, polys] : polysByNet) {
-            if (polys.size() < 2) continue;
             if (net == getNetId("#")) continue;
-            sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() < b->getllx();});
-            
-            // For Initial Iterations Just 
-            if (iter <= 1){
-                for (int i = 0; i + 1 < polys.size(); i += 2) {
-                    routePairs.push_back({polys[i], polys[i+1], net});
-                }
-            }
-            else{
-                vector<CornerStitch*> connected;
-                vector<CornerStitch*> unconnected = polys;
+            if (polys.size() < 2) continue;
 
-                // choose anchor (leftmost poly is a good default)
-                auto anchor = *min_element(unconnected.begin(), unconnected.end(),
+            // ---------- ITERATION 1 : SAME-X (VERTICAL FINGERS) ----------
+            if (iter == 1) {
+                sort(polys.begin(), polys.end(),
                     [](CornerStitch* a, CornerStitch* b) {
+                        if (a->getllx() != b->getllx())
+                            return a->getllx() < b->getllx();
+                        return a->getlly() < b->getlly();
+                    });
+
+                for (size_t i = 0; i + 1 < polys.size(); ) {
+                    CornerStitch* a = polys[i];
+                    CornerStitch* b = polys[i + 1];
+
+                    if (a->getllx() == b->getllx()) {
+                        routePairs.push_back({a->getllx(), a->getlly(), b->getllx(), b->getlly(), net});
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+
+            // ---------- ITERATION 2 : SAME-Y (HORIZONTAL MERGE) ----------
+            if (iter == 2) {
+                sort(polys.begin(), polys.end(),
+                    [](CornerStitch* a, CornerStitch* b) {
+                        if (a->getlly() != b->getlly())
+                            return a->getlly() < b->getlly();
                         return a->getllx() < b->getllx();
                     });
 
-                connected.push_back(anchor);
-                unconnected.erase(
-                    remove(unconnected.begin(), unconnected.end(), anchor),
-                    unconnected.end()
-                );
+                vector<bool> used(polys.size(), false);
 
-                while (!unconnected.empty()) {
-                    CornerStitch* bestSrc = nullptr;
-                    CornerStitch* bestDst = nullptr;
-                    long bestCost = LONG_MAX;
-
-                    for (auto* s : connected) {
-                        for (auto* d : unconnected) {
-                            long cx1 = (s->getllx() + s->geturx()) / 2;
-                            long cy1 = (s->getlly() + s->getury()) / 2;
-                            long cx2 = (d->getllx() + d->geturx()) / 2;
-                            long cy2 = (d->getlly() + d->getury()) / 2;
-
-                            long cost = llabs(cx1 - cx2) + llabs(cy1 - cy2);
-                            if (cost < bestCost) {
-                                bestCost = cost;
-                                bestSrc = s;
-                                bestDst = d;
-                            }
+                for (size_t i = 0; i < polys.size(); i++) {
+                    for (size_t j = i + 1; j < polys.size(); j++) {
+                        if (polys[i]->getlly() == polys[j]->getlly()) {
+                            routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[j]->getllx(), polys[j]->getlly(), net});
+                            break;
                         }
                     }
-
-                    // route bestSrc → bestDst
-                    routePairs.push_back({bestSrc, bestDst, net});
-
-                    connected.push_back(bestDst);
-                    unconnected.erase(
-                        remove(unconnected.begin(), unconnected.end(), bestDst),
-                        unconnected.end()
-                    );
                 }
+                continue;
             }
 
+            // ---------- ITERATION == 3 : Normal X-Sorted POly Selection ----------
+            // if (iter >= 3 && iter%2 == 1){
+            //     sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() > b->getllx();});
+            //     for (int i = 0; i + 1 < polys.size(); i += 2) {
+            //             routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[i+1]->getllx(), polys[i+1]->getlly(), net});
+            //     }
+            // }
+            // // ---------- ITERATION == 4 : Normal Reverse X-Sorted POly Selection ----------
+            // sort(polys.begin(), polys.end(), [](CornerStitch* a, CornerStitch* b) {return a->getllx() < b->getllx();});
+            // for (int i = 0; i + 1 < polys.size(); i += 2) {
+            //         routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[i+1]->getllx(), polys[i+1]->getlly(), net});
+            // }
+
+            // ---------- ITERATION >= 3 : CENTER-BASED CONNECT ----------
+            vector<CornerStitch*> connected;
+            vector<CornerStitch*> unconnected = polys;
+
+            // anchor = leftmost poly
+            auto anchor = *min_element(unconnected.begin(), unconnected.end(),
+                [](CornerStitch* a, CornerStitch* b) {
+                    return a->getllx() < b->getllx();
+                });
+
+            connected.push_back(anchor);
+            unconnected.erase(
+                remove(unconnected.begin(), unconnected.end(), anchor),
+                unconnected.end()
+            );
+
+            while (!unconnected.empty()) {
+                CornerStitch* bestSrc = nullptr;
+                CornerStitch* bestDst = nullptr;
+                long bestCost = LONG_MAX;
+
+                for (auto* s : connected) {
+                    for (auto* d : unconnected) {
+                        long cx1 = (s->getllx() + s->geturx()) / 2;
+                        long cy1 = (s->getlly() + s->getury()) / 2;
+                        long cx2 = (d->getllx() + d->geturx()) / 2;
+                        long cy2 = (d->getlly() + d->getury()) / 2;
+
+                        long cost = llabs(cx1 - cx2) + llabs(cy1 - cy2);
+
+                        if (cost < bestCost) {
+                            bestCost = cost;
+                            bestSrc = s;
+                            bestDst = d;
+                        }
+                    }
+                }
+
+                if (!bestSrc || !bestDst) break;
+
+                routePairs.push_back({bestSrc->getllx(), bestSrc->getlly(), bestDst->getllx(), bestDst->getlly(), net});
+                connected.push_back(bestDst);
+                unconnected.erase(
+                    remove(unconnected.begin(), unconnected.end(), bestDst),
+                    unconnected.end()
+                );
+            }
         }
+
+
+
         for (int rp = 0; rp < routePairs.size(); rp++) {
             auto& rpair = routePairs[rp];
-            CornerStitch* src = rpair.src;
-            CornerStitch* dst = rpair.dst;
+            CornerStitch* src = findTileContaining(
+                planeRoots[0],
+                rpair.src_x,
+                rpair.src_y
+            );
 
+            CornerStitch* dst = findTileContaining(
+                planeRoots[0],
+                rpair.dst_x,
+                rpair.dst_y
+            );
+
+            if (electricallyAdjacent(src, dst)) {cout << "Not routing Electrically Adjacent Tiles\n"; continue;}
             unsigned int net_route = rpair.net;
             deleteRectAndCoalesce(bloatedRoots[0],0,0,200,200);
             // Initial bloated plane = exact copy of planeRoots
@@ -582,14 +705,14 @@ int main(int argc, char** argv){
                     );
                     CornerStitch* src_in_bloated_plane = findTileContaining(
                         bloatedRoots[plane],
-                        src->getllx() + 0.1,
-                        src->getlly() + 0.1
+                        rpair.src_x + 0.1,
+                        rpair.src_y + 0.1
                     );
                     
                     CornerStitch* dst_in_bloated_plane = findTileContaining(
                         bloatedRoots[plane],
-                        dst->getllx() + 0.1,
-                        dst->getlly() + 0.1
+                        rpair.dst_x + 0.1,
+                        rpair.dst_y + 0.1
                     );
                     
                     if (!t) continue;
@@ -607,8 +730,8 @@ int main(int argc, char** argv){
 
             //Routing
 
-            auto srcPorts = getPolyPorts(src, bloatedRoots[0]);
-            auto dstPorts = getPolyPorts(dst, bloatedRoots[0]);
+            auto srcPorts = getPolyPorts(src, bloatedRoots[0], iter > 4);
+            auto dstPorts = getPolyPorts(dst, bloatedRoots[0], iter > 4);
             cout << "\n=== SRC PORTS ===\n";
             for (int i = 0; i < srcPorts.size(); i++) {
                 cout << "S" << i << ": (" << srcPorts[i].x
@@ -633,12 +756,21 @@ int main(int argc, char** argv){
                     cout << "DST: (" << dp.x << "," << dp.y << ")\n";
 
                     vector<pair<long,long>> trialRoute;
-                    if (tryVHV(bloatedRoots[0], sp, dp, trialRoute)){
+                    if (tryVHV(bloatedRoots[0], sp, dp, trialRoute, net_route)){
                         compressRoute(trialRoute);
                         linearizeRoot(trialRoute);
                         cout << "Route points (" << trialRoute.size() << "):\n";
                         for (int i = 0; i < trialRoute.size(); i++) {
                             cout << "  P" << i << ": (" << trialRoute[i].first << ","<< trialRoute[i].second << ")\n";
+                        }
+                        if (trialRoute.size() >= 2) {
+                            if (!checkPortAndRouteNormal(sp, trialRoute[1]))
+                                continue;
+                        }
+
+                        if (trialRoute.size() >= 2) {
+                            if (!checkPortAndRouteNormal(dp, trialRoute[trialRoute.size()-2]))
+                                continue;
                         }
 
                         long c = routeCost(trialRoute);
@@ -680,7 +812,8 @@ int main(int argc, char** argv){
                     auto [x0, y0] = bestRoute[i-1];
                     auto [x1, y1] = bestRoute[i];
 
-                    
+
+
                     bool trimStart = (i > 1 && isBend[i-1]);
                     bool trimEnd   = (i < bestRoute.size()-1 && isBend[i]);
 
@@ -704,10 +837,14 @@ int main(int argc, char** argv){
                         // horizontal segment
                         long xlo = min(x0, x1);
                         long xhi = max(x0, x1);
-
-                        if (trimStart) xlo += HALF;
-                        if (trimEnd)  xhi -= HALF;
-
+                        if (x1 < x0){
+                            if (trimEnd) xlo += HALF;
+                            if (trimStart   )  xhi -= HALF;
+                        }
+                        else{
+                            if (trimStart) xlo += HALF;
+                            if (trimEnd)  xhi -= HALF;
+                        }
                         if (xhi > xlo) {
                             insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
 
