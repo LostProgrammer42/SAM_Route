@@ -963,11 +963,7 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
     return true;
 }
 
-bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
-    if (!a || !b) return false;
-    if (a->isSpace() || b->isSpace()) return false;
-    if (a->getNet() != b->getNet()) return false;
-
+inline bool geomTouch(const CornerStitch* a, const CornerStitch* b) {
     long ax0 = a->getllx();
     long ay0 = a->getlly();
     long ax1 = a->geturx();
@@ -978,14 +974,25 @@ bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
     long bx1 = b->geturx();
     long by1 = b->getury();
 
-    // Touch OR overlap in X
+    // Touch or overlap in X and Y
     bool xTouch = !(ax1 < bx0 || bx1 < ax0);
-    // Touch OR overlap in Y
     bool yTouch = !(ay1 < by0 || by1 < ay0);
 
-    if (xTouch && yTouch)
-        return true;
-    
+    return xTouch && yTouch;
+}
+
+
+bool electricallyAdjacent(
+    CornerStitch* a,
+    CornerStitch* b
+) {
+    if (!a || !b) return false;
+    if (a->isSpace() || b->isSpace()) return false;
+    if (a->getNet() != b->getNet()) return false;
+    if (a == b) return true;
+    if (geomTouch(a,b)) return true;
+    unsigned int net = a->getNet();
+
     unordered_set<CornerStitch*> visited;
     deque<CornerStitch*> q;
 
@@ -996,23 +1003,33 @@ bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
         CornerStitch* cur = q.front();
         q.pop_front();
 
-        if (cur == b)
-            return true;
+        // Traverse ALL tiles geometrically touching cur
+        unordered_set<CornerStitch*> seen;
+        deque<CornerStitch*> scan;
+        scan.push_back(a);
+        seen.insert(a);
 
-        CornerStitch* nbrs[4] = {
-            cur->left(),
-            cur->right(),
-            cur->top(),
-            cur->bottom()
-        };
+        while (!scan.empty()) {
+            CornerStitch* t = scan.front();
+            scan.pop_front();
+            if (!t) continue;
 
-        for (CornerStitch* n : nbrs) {
-            if (!n) continue;
-            if (n->isSpace()) continue;
-            if (n->getNet() != a->getNet()) continue;
+            if (!t->isSpace() && t->getNet() == net) {
+                if (t == b && geomTouch(cur, t))
+                    return true;
 
-            if (visited.insert(n).second) {
-                q.push_back(n);
+                if (!visited.count(t) && geomTouch(cur, t)) {
+                    visited.insert(t);
+                    q.push_back(t);
+                }
+            }
+
+            CornerStitch* nbrs[4] = {
+                t->left(), t->right(), t->top(), t->bottom()
+            };
+            for (auto* nb : nbrs) {
+                if (nb && seen.insert(nb).second)
+                    scan.push_back(nb);
             }
         }
     }
