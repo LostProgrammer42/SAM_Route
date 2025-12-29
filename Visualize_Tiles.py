@@ -4,7 +4,7 @@ from matplotlib.patches import Rectangle
 
 # ---------- CONFIG ----------
 plane_files = [
-    ("plane0_bloated.sam", 0)
+    ("plane0_routed.sam", 0)
     #("plane1_bloated.sam", 1)
     # ("plane2.sam", 2),
 ]
