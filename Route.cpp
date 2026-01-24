@@ -503,8 +503,8 @@ int main(int argc, char** argv){
         bool ok = insertTileRect(planeRoots[plane],lx, ly,wx, wy,attr,netId);
         bool ok1 = insertTileRect(bloatedRoots[plane],lx, ly,wx, wy,attr,netId);
 
-        coalesceAfterDeletion(planeRoots[0],10);
-        coalesceAfterDeletion(bloatedRoots[0],10);
+        coalesce(planeRoots[0],10);
+        coalesce(bloatedRoots[0],10);
         
         if (!ok || !ok1) {
             cout << "Insert failed at line " << lineNo
@@ -679,7 +679,7 @@ int main(int argc, char** argv){
                     );
                 }
             }
-            coalesceAfterDeletion(bloatedRoots[0], 50);
+            coalesce(bloatedRoots[0], 50);
             exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_1.sam");
             //Bloating
             for(const auto layer : layers){
@@ -711,7 +711,7 @@ int main(int argc, char** argv){
                     
                     if (!ok1) {cout << "Bloating Failed\n";}
                 }
-                coalesceAfterDeletion(bloatedRoots[0],50);
+                coalesce(bloatedRoots[0],50);
 
             }
             exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_2.sam");
@@ -862,7 +862,7 @@ int main(int argc, char** argv){
                 
 
             }
-            coalesceAfterDeletion(planeRoots[0]);
+            coalesce(planeRoots[0]);
             rebuildRectsByLayer(planeRoots[0], rectsByLayer);
             polysByNet.clear();
             exportTiles(planeRoots[0], "plane0_route.sam");
@@ -875,8 +875,14 @@ int main(int argc, char** argv){
         }
         cout << "[DEBUG] noProgressIters = " << noProgressIters << "\n";
     }
+
+    CornerStitch* substrate = findTileContaining(planeRoots[0], 17, 17);
+    placeContactSquare(planeRoots[0],planeRoots[1],L_M2,0,substrate);
     exportTiles(planeRoots[0], "plane0_route.sam");
+    exportTiles(planeRoots[1], "plane1_route.sam");
+
     
 
     return 0;
 }
+
