@@ -397,3 +397,25 @@ void rebuildRectsByLayer(
     }
     
 }
+
+void rebuildLayerByNet(
+    int Layer, 
+    CornerStitch* roots[3],
+    unordered_map<unsigned int, vector<CornerStitch*>>& layerByNet,
+    unordered_map<int, vector<RectRec>>& rectsByLayer)
+{
+    for (auto& [attr, rects] : rectsByLayer) {
+        if (attr != Layer) continue;
+
+        for (auto& r : rects) {
+            CornerStitch* t = findTileContaining(
+                roots[r.plane],
+                r.lx + 0.1,
+                r.ly + 0.1
+            );
+            if (t && !t->isSpace()) {
+                layerByNet[t->getNet()].push_back(t);
+            }
+        }
+    }
+}

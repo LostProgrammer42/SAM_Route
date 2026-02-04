@@ -935,6 +935,7 @@ enum LayerType {
     L_NTRANS,
     L_PTRANS,
     L_POLY,
+    L_LI,
     L_M1,
     L_M2
 };

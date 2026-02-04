@@ -5,8 +5,9 @@
 #include "Routing_Helpers.cpp"
 using namespace std;
 
+
 unordered_map<int, vector<RectRec>> rectsByLayer;
-unordered_map<unsigned int, vector<CornerStitch*>> polysByNet;
+unordered_map<unsigned int, vector<CornerStitch*>> polysByNet, metalsByNet, lisByNet;
 int main(int argc, char** argv){
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect>\n";
@@ -78,36 +79,32 @@ int main(int argc, char** argv){
     while(true){
         cout << "Iteration: " << iter + 1 << " \n"; 
         if (iter ++ > MAX_ITERS) {cout << "Max Iterations Reached\n"; break;}
-        polysByNet.clear();
-        for (auto& [attr, rects] : rectsByLayer) {
-            if (attr != L_POLY) continue;
-
-            for (auto& r : rects) {
-                CornerStitch* t = findTileContaining(
-                    planeRoots[r.plane],
-                    r.lx + 0.1,
-                    r.ly + 0.1
-                );
-                if (t && !t->isSpace()) {
-                    polysByNet[t->getNet()].push_back(t);
-                }
-            }
-        }
+        polysByNet.clear(); metalsByNet.clear(); lisByNet.clear(); //clear old net lists and rebuild
+        rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
+        rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
+        rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
+        
         vector<RoutePair> routePairs;
         vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
-        vector<unsigned int> toErase;
+        unordered_map<unsigned int, vector<unsigned int>> toErase;
         for(auto& [net, polys]: polysByNet){
             if (net == getNetId("#")) continue;
             if(WholeNetElectricallyConnected(polys)){
                 cout << "Net: " << net << " fully routed\n";
-                toErase.push_back(net);
+                toErase[polys[0]->getAttr()].push_back(net);
             }
         }
         
-        for(unsigned int net: toErase){
+        for(unsigned int net: toErase[L_POLY]){
             polysByNet.erase(net);
         }
-     
+        for(unsigned int net: toErase[L_LI]){
+            lisByNet.erase(net);
+        }
+        for(unsigned int net: toErase[L_M1]){
+            metalsByNet.erase(net);
+        }
+        
 
         if(polysByNet.size() == 1){break;}
 
@@ -430,12 +427,9 @@ int main(int argc, char** argv){
         }
         virtualTileCommit(planeRoots[0]);
         rebuildRectsByLayer(planeRoots,rectsByLayer);
-        //exportTiles(planeRoots[0],"plane0_routed.sam");
     }
     
-    CornerStitch* poly = findTileContaining(planeRoots[0],40,1);
-    //alignAndMergeRight(planeRoots[0],poly,poly->right());
-    cout << "\n=== ROUTED PLANE " << 0 << " ===\n"; 
+    
     exportTiles(planeRoots[0], "plane0_routed.sam");
     exportRect(planeRoots,"XNOR2X1_routed.rect");
 
