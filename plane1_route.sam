@@ -1,7 +1,0 @@
-[
-  {"name":"T0","llx":0,"lly":0,"wx":80,"wy":14,"filled":False,"net":0,"layer":"none"},
-  {"name":"T1","llx":19,"lly":14,"wx":61,"wy":3,"filled":False,"net":0,"layer":"none"},
-  {"name":"T2","llx":16,"lly":14,"wx":3,"wy":3,"filled":True,"net":5,"layer":"m2"},
-  {"name":"T3","llx":0,"lly":17,"wx":80,"wy":63,"filled":False,"net":0,"layer":"none"},
-  {"name":"T4","llx":0,"lly":14,"wx":16,"wy":3,"filled":False,"net":0,"layer":"none"}
-]

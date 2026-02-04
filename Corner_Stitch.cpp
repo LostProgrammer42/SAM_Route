@@ -935,6 +935,7 @@ enum LayerType {
     L_NTRANS,
     L_PTRANS,
     L_POLY,
+    L_LI,
     L_M1,
     L_M2
 };
@@ -965,8 +966,8 @@ string attrToLayer(unsigned int attr) {
 void exportTiles(CornerStitch* &anchor, const string& filename) {
     if (!anchor) { cout << "[]\n"; return; }
 
-    const long VIS_MIN = -80;   // visualization clamp
-    const long VIS_MAX =  80;
+    const long VIS_MIN = -100;   // visualization clamp
+    const long VIS_MAX =  100;
 
     unordered_set<CornerStitch*> seen;
     deque<CornerStitch*> dq;
@@ -1040,84 +1041,4 @@ void exportTiles(CornerStitch* &anchor, const string& filename) {
     }
     //cout << "]\n";
     fout << "]\n";
-}
-
-bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
-    if (polys.empty()) return true;
-
-    unordered_set<CornerStitch*> visited;
-    deque<CornerStitch*> q;
-
-    q.push_back(polys[0]);
-    visited.insert(polys[0]);
-
-    while (!q.empty()) {
-        CornerStitch* cur = q.front();
-        q.pop_front();
-
-        for (CornerStitch* other : polys) {
-            if (visited.count(other)) continue;
-            if (!electricallyAdjacent(cur, other)) continue;
-
-            visited.insert(other);
-            q.push_back(other);
-        }
-    }
-
-    return visited.size() == polys.size();
-}
-
-bool placeContactSquare(
-    CornerStitch* substrateRoot,
-    CornerStitch* squareRoot,
-    unsigned int squareAttr,
-    int side,
-    CornerStitch* substrateTile,
-    unsigned int net = 0
-) {
-    if (!substrateTile || !squareRoot) return false;
-
-    long lx = substrateTile->getllx();
-    long rx = substrateTile->geturx();
-    long ly = substrateTile->getlly();
-    long ry = substrateTile->getury();
-
-    const long SQ = 3;
-    const long MIN_MARGIN = 1;
-
-    long tileWidth  = rx - lx;
-    long tileHeight = ry - ly;
-
-    if (tileWidth < SQ + 2 * MIN_MARGIN) return false;
-    if (tileHeight < SQ + 2 * MIN_MARGIN) return false;
-
-    long MARGIN = (tileWidth - SQ) / 2;
-    if (MARGIN < MIN_MARGIN) return false;
-
-    if ((rx - lx) < SQ + 2*MARGIN) return false;
-    if ((ry - ly) < SQ + 2*MARGIN) return false;
-
-    long square_lx = lx + MARGIN;
-
-    long square_ly;
-    if (side == 0) {
-        square_ly = ry - MARGIN - SQ;
-    } else {
-        square_ly = ly + MARGIN;
-    }
-
-    bool ok = insertTileRect(
-        squareRoot,
-        square_lx,
-        square_ly,
-        SQ,
-        SQ,
-        squareAttr,
-        substrateTile->getNet()
-    );
-
-    if (!ok) return false;
-
-    coalesce(squareRoot, 10);
-    return true;
 }

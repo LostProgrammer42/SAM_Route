@@ -1,469 +1,13 @@
-// Author: Stavan Mehta
+// Author: Stavan Mehta, Affaan Fakih
 // Version: Pilot Initial (V0)
 
 #include <bits/stdc++.h>
-#include "Corner_Stitch.cpp"
+#include "Routing_Helpers.cpp"
 using namespace std;
 
-int layerToPlane(const string& layer) {
-    if (layer == "ndiff"  || layer == "pdiff" ||
-        layer == "ntransistor" || layer == "ptransistor")
-        return 0; // diffusion, devices
-
-    if (layer == "polysilicon")
-        return 0    ; // poly
-
-    if (layer == "m2")
-        return 2; // metal
-
-    return -1; 
-}
-
-unordered_map<string, unsigned int> netMap;
-unsigned int nextNetId = 1;
-
-unsigned int getNetId(const string& net) {
-    if (netMap.count(net)) return netMap[net];
-    netMap[net] = nextNetId;
-    return nextNetId++;
-}
-
-bool parseRectLine(
-    const string& line,
-    string& net,
-    string& layer,
-    long& lx, long& ly,
-    long& wx, long& wy
-) {
-    if (line.empty() || line[0] == '#')
-        return false;
-
-    string kind;
-    long x1, y1, x2, y2;
-
-    stringstream ss(line);
-    ss >> kind;
-
-    if (kind != "rect" && kind != "inrect" && kind != "outrect")
-        return false;
-
-    ss >> net >> layer >> x1 >> y1 >> x2 >> y2;
-    if (!ss) return false;
-
-    lx = x1;
-    ly = y1;
-    wx = x2 - x1;
-    wy = y2 - y1;
-
-    if (wx <= 0 || wy <= 0)
-        return false;
-
-    return true;
-}
-
-
-
-unsigned int layerToAttr(const string& layer) {
-    if (layer == "ndiff")        return L_NDIFF;
-    if (layer == "pdiff")        return L_PDIFF;
-    if (layer == "ntransistor")  return L_NTRANS;
-    if (layer == "ptransistor")  return L_PTRANS;
-    if (layer == "polysilicon")  return L_POLY;
-    if (layer == "m2")           return L_M2;
-    return L_NONE;
-}
-
-long layerBloat(const string& layer) {
-    if (layer == "ndiff" || layer == "pdiff") return 2;
-    if (layer == "ntransistor" || layer == "ptransistor") return 0;
-    if (layer == "polysilicon") return 3;
-    if (layer == "m2") return 0;
-    return 0;
-}
-
-struct RectRec {
-    int plane;
-    string layer;
-    unsigned int attr;
-    unsigned int net;
-    long lx, ly, wx, wy;
-};
-
-vector<RectRec> rects;
-enum Dir { LEFT, RIGHT, UP, DOWN };
-struct Port {
-    long x, y;
-    Dir normal;
-};
-
-vector<Port> getPolyPorts(
-    CornerStitch* t,              // NORMAL plane tile
-    CornerStitch* bloatedRoot ,     // BLOATED plane root
-    bool multiSample 
-) {
-    vector<Port> ports;
-
-    long lx = t->getllx();
-    long rx = t->geturx();
-    long ly = t->getlly();
-    long ry = t->getury();
-    
-    long cx = (lx + rx) / 2;
-    long cy = (ly + ry) / 2;
-
-    auto freeInBloated = [&](long x, long y) {
-        CornerStitch* b = findTileContaining(bloatedRoot, x, y);
-        if (!b) return false;
-        if (b->isSpace()) return true;
-        return (b->getNet() == t->getNet());  // allow same-net adjacency
-    };
-
-
-    // LEFT port
-    if (freeInBloated(lx - 0.1, cy))
-        ports.push_back({lx, cy, LEFT});
-
-    // RIGHT port
-    if (freeInBloated(rx + 0.1, cy))
-        ports.push_back({rx, cy, RIGHT});
-
-    // BOTTOM port
-    if (freeInBloated(cx, ly - 0.1))
-        ports.push_back({cx, ly, DOWN});
-
-    // TOP port
-    if (freeInBloated(cx, ry + 0.1))
-        ports.push_back({cx, ry, UP});
-    
-    if(!multiSample)
-        return ports;
-    
-    long w = rx - lx;
-    long h = ry - ly;
-
-    // Conservative sample count
-    int NSx = max(1L, min(w / 4, 4L));
-    int NSy = max(1L, min(h / 4, 4L));
-
-    // LEFT / RIGHT edges (sample Y)
-    for (int i = 1; i <= NSy; i++) {
-        long y = ly + (i * h) / (NSy + 1);
-
-        if (freeInBloated(lx - 1, y))
-            ports.push_back({lx, y, LEFT});
-
-        if (freeInBloated(rx + 1, y))
-            ports.push_back({rx, y, RIGHT});
-    }
-
-    // TOP / BOTTOM edges (sample X)
-    for (int i = 1; i <= NSx; i++) {
-        long x = lx + (i * w) / (NSx + 1);
-
-        if (freeInBloated(x, ly - 1))
-            ports.push_back({x, ly, DOWN});
-
-        if (freeInBloated(x, ry + 1))
-            ports.push_back({x, ry, UP});
-    }
-
-    return ports;
-}
-bool horizontalChannel(
-    CornerStitch* bloatedRoot,
-    long y,
-    long xStart,
-    long& xl,
-    long& xr,
-    long halfW
-) {
-    xl = xStart;
-    xr = xStart;
-
-    // left expand
-    while (true) {
-        CornerStitch* t = findTileContaining(bloatedRoot, xl - 1, y);
-        if (!t || !t->isSpace()) break;
-        xl = t->getllx();
-    }
-
-    // right expand
-    while (true) {
-        CornerStitch* t = findTileContaining(bloatedRoot, xr + 1, y);
-        if (!t || !t->isSpace()) break;
-        xr = t->geturx();
-    }
-
-    return xl < xr;
-}
-
-bool verticalChannel(
-    CornerStitch* bloatedRoot,
-    long x,
-    long yStart,
-    long& yb,
-    long& yt,
-    long halfW
-) {
-    yb = yStart;
-    yt = yStart;
-
-    while (true) {
-        CornerStitch* t = findTileContaining(bloatedRoot, x, yb - 1);
-        if (!t || !t->isSpace()) break;
-        yb = t->getlly();
-    }
-
-    while (true) {
-        CornerStitch* t = findTileContaining(bloatedRoot, x, yt + 1);
-        if (!t || !t->isSpace()) break;
-        yt = t->getury();
-    }
-
-    return yb < yt;
-}
-
-bool tryVHV(
-    CornerStitch* bloatedRoot,
-    Port s,
-    Port t,
-    vector<pair<long,long>>& path,
-    unsigned int net
-) {
-    auto isFree = [&](long x, long y) {
-        CornerStitch* tile = findTileContaining(bloatedRoot, x, y);
-        if (!tile) return false;
-
-        // Space is always free
-        if (tile->isSpace()) return true;
-
-        // Same-net obstacles are allowed
-        if (tile->getNet() == net) return true;
-
-        return false;
-    };
-
-    cout << "Trying Straight Horizontal\n";
-    // 1. Straight horizontal
-    if (s.y == t.y) {
-        if (isFree((s.x + t.x) / 2, s.y)) {
-            path = { {s.x, s.y}, {t.x, t.y} };
-            return true;
-        }
-    }
-
-    cout << "Trying Straight Vertical\n";
-    // 2. Straight vertical
-    if (s.x == t.x) {
-        if (isFree(s.x, (s.y + t.y) / 2)) {
-            path = { {s.x, s.y}, {t.x, t.y} };
-            return true;
-        }
-    }
-
-    cout << "Trying HV \n";
-    // 3. H → V
-    if (isFree(t.x, s.y) && isFree(t.x, t.y)) {
-        path = {
-            {s.x, s.y},
-            {t.x, s.y},
-            {t.x, t.y}
-        };
-        return true;
-    }
-
-    cout << "Trying VH\n";
-    // 4. V → H
-    if (isFree(s.x, t.y) && isFree(t.x, t.y)) {
-        path = {
-            {s.x, s.y},
-            {s.x, t.y},
-            {t.x, t.y}
-        };
-        return true;
-    }
-
-    cout << "Trying VHV\n";
-    // 5. V → H → V (use vertical channel)
-    long yb, yt;
-    if (!verticalChannel(bloatedRoot, s.x, s.y, yb, yt, 0))
-        return false;
-
-    vector<long> ys = {
-        (yb + yt) / 2,
-        s.y,
-        t.y
-    };
-
-    for (long y : ys) {
-        if (y < yb || y > yt) continue;
-
-        if (isFree(s.x, y) &&
-            isFree((s.x + t.x) / 2, y) &&
-            isFree(t.x, y)) {
-
-            path = {
-                {s.x, s.y},
-                {s.x, y},
-                {t.x, y},
-                {t.x, t.y}
-            };
-            return true;
-        }
-    }   
-
-    cout << "Trying HVH\n";
-    long xl, xr;
-    // 6. H → V → H
-
-    if (horizontalChannel(bloatedRoot, s.y, s.x, xl, xr, 0)) {
-
-        // candidate x-bends
-        vector<long> xs = {
-            (xl + xr) / 2,
-            s.x,
-            t.x
-        };
-
-        for (long x : xs) {
-            if (x < xl || x > xr) continue;
-
-            CornerStitch* a = findTileContaining(bloatedRoot, x, s.y);
-            CornerStitch* b = findTileContaining(bloatedRoot, x, t.y);
-            CornerStitch* c = findTileContaining(bloatedRoot, t.x, t.y);
-
-            if (!a || !b || !c) continue;
-            if (!a->isSpace() || !b->isSpace() || !c->isSpace()) continue;
-
-            path = {
-                {s.x, s.y},
-                {x, s.y},
-                {x, t.y},
-                {t.x, t.y}
-            };
-            return true;
-        }
-    }
-
-    return false;
-}
-
-
-long routeCost(const vector<pair<long,long>>& r) {
-    long cost = 0;
-    for (int i = 1; i < r.size(); i++) {
-        cost += llabs(r[i].first  - r[i-1].first)
-              + llabs(r[i].second - r[i-1].second);
-    }
-    // penalize extra bends
-    cost += 50 * (int(r.size()) - 2);
-    return cost;
-}
-void compressRoute(vector<pair<long,long>>& r) {
-    vector<pair<long,long>> out;
-    for (auto& p : r) {
-        if (out.empty() || out.back() != p)
-            out.push_back(p);
-    }
-    r.swap(out);
-}
-
-void linearizeRoot(std::vector<std::pair<long,long>>& r) {
-    if (r.size() <= 2) return;
-
-    std::vector<std::pair<long,long>> out;
-    out.push_back(r[0]);
-
-    for (size_t i = 1; i + 1 < r.size(); i++) {
-        auto [x0, y0] = out.back();
-        auto [x1, y1] = r[i];
-        auto [x2, y2] = r[i + 1];
-
-        // collinear in vertical direction
-        if (x0 == x1 && x1 == x2) {
-            continue;
-        }
-
-        // collinear in horizontal direction
-        if (y0 == y1 && y1 == y2) {
-            continue;
-        }
-
-        // real corner
-        out.push_back(r[i]);
-    }
-
-    out.push_back(r.back());
-    r.swap(out);
-}
 
 unordered_map<int, vector<RectRec>> rectsByLayer;
-unordered_map<unsigned int, vector<CornerStitch*>> polysByNet;
-
-struct RoutePair {
-    long src_x, src_y;
-    long dst_x, dst_y;
-    unsigned int net;
-};
-
-bool checkPortAndRouteNormal(const Port& p,
-                        const pair<long,long>& next) {
-    long dx = next.first  - p.x;
-    long dy = next.second - p.y;
-
-    switch (p.normal) {
-        case LEFT:  return dx < 0;
-        case RIGHT: return dx > 0;
-        case UP:    return dy > 0;
-        case DOWN:  return dy < 0;
-    }
-    return false;
-}
-
-void rebuildRectsByLayer(
-    CornerStitch* root,
-    unordered_map<int, vector<RectRec>>& rectsByLayer
-) {
-    rectsByLayer.clear();
-
-    unordered_set<CornerStitch*> seen;
-    deque<CornerStitch*> dq;
-    dq.push_back(root);
-    seen.insert(root);
-
-    while (!dq.empty()) {
-        CornerStitch* t = dq.front(); dq.pop_front();
-        if (!t) continue;
-
-        if (!t->isSpace()) {
-            long llx = t->getllx();
-            long lly = t->getlly();
-            long urx = t->geturx();
-            long ury = t->getury();
-
-            rectsByLayer[t->getAttr()].push_back({
-                0,                              // plane
-                attrToLayer(t->getAttr()),      // layer string
-                t->getAttr(),
-                t->getNet(),
-                llx,
-                lly,
-                urx - llx,
-                ury - lly
-            });
-        }
-
-        CornerStitch* nbrs[4] = {
-            t->left(), t->right(), t->bottom(), t->top()
-        };
-        for (auto nb : nbrs) {
-            if (nb && seen.insert(nb).second)
-                dq.push_back(nb);
-        }
-    }
-}
-
-
+unordered_map<unsigned int, vector<CornerStitch*>> polysByNet, metalsByNet, lisByNet;
 int main(int argc, char** argv){
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect>\n";
@@ -479,21 +23,20 @@ int main(int argc, char** argv){
     CornerStitch* planeRoots[3];
     CornerStitch* bloatedRoots[3];
     for (int i = 0; i < 3; i++){
-        planeRoots[i] = new CornerStitch(0, 0);
-        bloatedRoots[i] = new CornerStitch(0, 0);
+        planeRoots[i] = new CornerStitch(-20, -20);
+        bloatedRoots[i] = new CornerStitch(-20, -20);
     }
-
     string line;
     int lineNo = 0;
     while (getline(fin, line)) {
         lineNo++;
 
-        string net, layer;
+        string net, layer, inout;
         long lx, ly, wx, wy;
 
-        if (!parseRectLine(line, net, layer, lx, ly, wx, wy))
+        if (!parseRectLine(line, inout, net, layer, lx, ly, wx, wy))
             continue;
-
+        ioMap[net] = inout; //Global mapping of nets which are io ports stored in helper cpp file
         int plane = layerToPlane(layer);
         if (plane < 0) continue; // skip unknown layers
 
@@ -503,53 +46,66 @@ int main(int argc, char** argv){
         bool ok = insertTileRect(planeRoots[plane],lx, ly,wx, wy,attr,netId);
         bool ok1 = insertTileRect(bloatedRoots[plane],lx, ly,wx, wy,attr,netId);
 
-        coalesce(planeRoots[0],10);
-        coalesce(bloatedRoots[0],10);
-        
         if (!ok || !ok1) {
             cout << "Insert failed at line " << lineNo
                  << " (plane " << plane << "): "
                  << line << "\n";
         }
-        rectsByLayer[attr].push_back({plane,layer,attr,netId,lx, ly, wx, wy});
+        
+        rectsByLayer[attr].push_back({
+        plane,
+        layer,
+        attr,
+        netId,
+        lx, ly, wx, wy
+        });
     }
-
+    
+    cout << "\n=== PLANE " << 0 << " ===\n"; 
     exportTiles(planeRoots[0], "plane0.sam");
+    cout << "\n=== PLANE " << 1 << " ===\n"; 
+    exportTiles(planeRoots[1], "plane1.sam");
+    cout << "\n=== PLANE " << 2 << " ===\n"; 
+    exportTiles(planeRoots[2], "plane2.sam"); 
+    
+    vector<long> routeCosts;
+    vector<vector<Point>> pathPieces;
+    vector<CornerStitch*> pathTiles;
+    vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
     int MAX_ITERS = 8;
     int iter = 0;
     int noProgressIters = 0;
+
     while(true){
-        bool anyRouteInsertedThisIter = false;
         cout << "Iteration: " << iter + 1 << " \n"; 
         if (iter ++ > MAX_ITERS) {cout << "Max Iterations Reached\n"; break;}
-        for (auto& [attr, rects] : rectsByLayer) {
-            if (attr != L_POLY) continue;
-
-            for (auto& r : rects) {
-                CornerStitch* t = findTileContaining(
-                    planeRoots[r.plane],
-                    r.lx + 1,
-                    r.ly + 1
-                );
-                if (t && !t->isSpace()) {
-                    polysByNet[t->getNet()].push_back(t);
-                }
-            }
-        }
+        polysByNet.clear(); metalsByNet.clear(); lisByNet.clear(); //clear old net lists and rebuild
+        rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
+        rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
+        rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
+        
         vector<RoutePair> routePairs;
         vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
-        vector<unsigned int> toErase;
+        unordered_map<unsigned int, vector<unsigned int>> toErase;
         for(auto& [net, polys]: polysByNet){
             if (net == getNetId("#")) continue;
             if(WholeNetElectricallyConnected(polys)){
                 cout << "Net: " << net << " fully routed\n";
-                toErase.push_back(net);
+                toErase[polys[0]->getAttr()].push_back(net);
             }
         }
-
-        for(unsigned int net: toErase){
+        
+        for(unsigned int net: toErase[L_POLY]){
             polysByNet.erase(net);
         }
+        for(unsigned int net: toErase[L_LI]){
+            lisByNet.erase(net);
+        }
+        for(unsigned int net: toErase[L_M1]){
+            metalsByNet.erase(net);
+        }
+        
+
         if(polysByNet.size() == 1){break;}
 
         for (auto& [net, polys] : polysByNet) {
@@ -624,6 +180,7 @@ int main(int argc, char** argv){
 
                 for (auto* s : connected) {
                     for (auto* d : unconnected) {
+                        if(!s || !d) continue;
                         long cx1 = (s->getllx() + s->geturx()) / 2;
                         long cy1 = (s->getlly() + s->getury()) / 2;
                         long cx2 = (d->getllx() + d->geturx()) / 2;
@@ -650,8 +207,7 @@ int main(int argc, char** argv){
             }
         }
 
-
-
+        
         for (int rp = 0; rp < routePairs.size(); rp++) {
             auto& rpair = routePairs[rp];
             CornerStitch* src = findTileContaining(
@@ -665,10 +221,13 @@ int main(int argc, char** argv){
                 rpair.dst_x,
                 rpair.dst_y
             );
+            
+
+            int routePlane = layerToPlane(attrToLayer(src->getAttr()));
 
             if (electricallyAdjacent(src, dst)) {cout << "Not routing Electrically Adjacent Tiles\n"; continue;}
             unsigned int net_route = rpair.net;
-            deleteRectAndCoalesce(bloatedRoots[0],0,0,200,200);
+            deleteRectAndCoalesce(bloatedRoots[0],-20,-20,200,200);
             // Initial bloated plane = exact copy of planeRoots
             for (auto& [attr, rects] : rectsByLayer) {
                 for (auto& r : rects) {
@@ -679,8 +238,7 @@ int main(int argc, char** argv){
                     );
                 }
             }
-            coalesce(bloatedRoots[0], 50);
-            exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_1.sam");
+            exportTiles(bloatedRoots[0], "plane0_pre_route.sam");
             //Bloating
             for(const auto layer : layers){
                 for (const auto& r : rectsByLayer[layerToAttr(layer)]) {
@@ -711,19 +269,17 @@ int main(int argc, char** argv){
                     
                     if (!ok1) {cout << "Bloating Failed\n";}
                 }
-                coalesce(bloatedRoots[0],50);
-
+                for(int i=0; i<3;i++){
+                    coalesce(bloatedRoots[i],50);
+                }
             }
-            exportTiles(bloatedRoots[0], "plane0_pre_route_bloated_2.sam");
-            
+            exportTiles(bloatedRoots[0], "plane0_pre_route_bloated.sam");
 
-            //Routing
-            bool useExtraPorts = (noProgressIters >= 2) || (iter > 8);
-            if (useExtraPorts) {
-               cout << "[INFO] Using multi-sampled ports due to stagnation\n";
-            }
-            auto srcPorts = getPolyPorts(src, bloatedRoots[0], useExtraPorts);
-            auto dstPorts = getPolyPorts(dst, bloatedRoots[0], useExtraPorts);
+            //Ports
+            bool useExtraPorts = (iter > 2);
+
+            auto srcPorts = getPorts(src, bloatedRoots[0], useExtraPorts);
+            auto dstPorts = getPorts(dst, bloatedRoots[0], useExtraPorts);
             cout << "\n=== SRC PORTS ===\n";
             for (int i = 0; i < srcPorts.size(); i++) {
                 cout << "S" << i << ": (" << srcPorts[i].x
@@ -735,154 +291,147 @@ int main(int argc, char** argv){
                 cout << "D" << i << ": (" << dstPorts[i].x
                     << "," << dstPorts[i].y << ")\n";
             }
-
+            vector<pair<Port,Port>> failedRoutes;
             bool routed = false;
-            vector<pair<long,long>> bestRoute;
-            long bestCost = LONG_MAX;
-            int attempt = 0;
-            for (auto& sp : srcPorts) {
-                for (auto& dp : dstPorts) {
-                    attempt++;
-                    cout << "\n--- TRY " << attempt << " ---\n";
-                    cout << "SRC: (" << sp.x << "," << sp.y << ") ";
-                    cout << "DST: (" << dp.x << "," << dp.y << ")\n";
+            
+            //Routing
+            while(true){
+                Port bestSrc, bestDst;
+                long bestCost = LONG_MAX;
+               
+                
+                for (auto s : srcPorts) {
+                    for (auto d : dstPorts) {
+                        if(count(failedRoutes.begin(),failedRoutes.end(),make_pair(s,d)) > 0) continue;
+                        long cost = llabs(s.x - d.x) + llabs(s.y - d.y);
 
-                    vector<pair<long,long>> trialRoute;
-                    if (tryVHV(bloatedRoots[0], sp, dp, trialRoute, net_route)){
-                        compressRoute(trialRoute);
-                        linearizeRoot(trialRoute);
-                        cout << "Route points (" << trialRoute.size() << "):\n";
-                        for (int i = 0; i < trialRoute.size(); i++) {
-                            cout << "  P" << i << ": (" << trialRoute[i].first << ","<< trialRoute[i].second << ")\n";
-                        }
-                        if (trialRoute.size() >= 2) {
-                            if (!checkPortAndRouteNormal(sp, trialRoute[1]))
-                                continue;
-                        }
-
-                        if (trialRoute.size() >= 2) {
-                            if (!checkPortAndRouteNormal(dp, trialRoute[trialRoute.size()-2]))
-                                continue;
-                        }
-
-                        long c = routeCost(trialRoute);
-                        if (c < bestCost) {
-                            bestCost = c;
-                            bestRoute = trialRoute;
-                            routed = true;
+                        if (cost < bestCost) {
+                            bestCost = cost;
+                            bestSrc = s;
+                            bestDst = d;
                         }
                     }
-                }
-            }
-
-            if (!routed) {
-                cout << "Routing failed for net " << net_route << "\n";
-            }
-            else{
-                anyRouteInsertedThisIter = true;
-                const long POLY_W = 2;
-                const long HALF = POLY_W / 2;
-                compressRoute(bestRoute);
-                linearizeRoot(bestRoute);
-                cout << "Best Route points (" << bestRoute.size() << "):\n";
-                        for (int i = 0; i < bestRoute.size(); i++) {
-                            cout << "  P" << i << ": (" << bestRoute[i].first << ","<< bestRoute[i].second << ")\n";
-                        }
-                vector<bool> isBend(bestRoute.size(), false);
-
-                for (int i = 1; i + 1 < bestRoute.size(); i++) {
-                    auto [x0,y0] = bestRoute[i-1];
-                    auto [x1,y1] = bestRoute[i];
-                    auto [x2,y2] = bestRoute[i+1];
-
-                    if ((x0 == x1 && y1 == y2) ||
-                        (y0 == y1 && x1 == x2)) {
-                        isBend[i] = true;
-                    }
-                }
-
-                for (int i = 1; i < bestRoute.size(); i++) {
-                    auto [x0, y0] = bestRoute[i-1];
-                    auto [x1, y1] = bestRoute[i];
-
-
-
-                    bool trimStart = (i > 1 && isBend[i-1]);
-                    bool trimEnd   = (i < bestRoute.size()-1 && isBend[i]);
-
-                    if (x0 == x1) {
-                        // vertical segment
-                        long ylo = min(y0, y1);
-                        long yhi = max(y0, y1);
-                        if (y1 < y0){
-                            if (trimEnd) ylo += HALF;
-                            if (trimStart)  yhi -= HALF;
-                        }
-                        else{
-                            if (trimStart) ylo += HALF;
-                            if (trimEnd)  yhi -= HALF;
-                        }
-                        if (yhi > ylo) {
-                            insertTileRect(planeRoots[0],x0 - HALF,ylo,POLY_W,yhi - ylo,L_POLY,net_route);
-
-                        }
-                    } else {
-                        // horizontal segment
-                        long xlo = min(x0, x1);
-                        long xhi = max(x0, x1);
-                        if (x1 < x0){
-                            if (trimEnd) xlo += HALF;
-                            if (trimStart   )  xhi -= HALF;
-                        }
-                        else{
-                            if (trimStart) xlo += HALF;
-                            if (trimEnd)  xhi -= HALF;
-                        }
-                        if (xhi > xlo) {
-                            insertTileRect(planeRoots[0],xlo,y0 - HALF,xhi - xlo,POLY_W,L_POLY,net_route);
-
-                        }
-                    }
-                }
-                for (int i = 1; i + 1 < bestRoute.size(); i++) {
-                    auto [x_prev, y_prev] = bestRoute[i-1];
-                    auto [x, y]           = bestRoute[i];
-                    auto [x_next, y_next] = bestRoute[i+1];
-
-                    // Only if direction changes (i.e., a bend)
-                    bool turn =
-                        (x_prev == x && y_next == y) ||
-                        (y_prev == y && x_next == x);
-
-                    if (!turn) continue;
-
-                    insertTileRect(planeRoots[0],x - HALF,y - HALF,POLY_W,POLY_W,L_POLY,net_route);
-
                 }
                 
 
+                
+                if(failedRoutes.size() == srcPorts.size() *  dstPorts.size()) break;
+                CornerStitch* start = findTileContaining(bloatedRoots[routePlane], src->getllx()+0.1, src->getlly()+0.1);
+                CornerStitch* cur;
+                switch(bestSrc.normal){
+                    case LEFT:  cur = findTileContaining(bloatedRoots[routePlane], bestSrc.x-0.1,bestSrc.y); break;
+                    case RIGHT: cur = findTileContaining(bloatedRoots[routePlane], bestSrc.x+0.1,bestSrc.y); break;
+                    case UP:    cur = findTileContaining(bloatedRoots[routePlane], bestSrc.x,bestSrc.y+0.1); break;
+                    case DOWN:  cur = findTileContaining(bloatedRoots[routePlane], bestSrc.x,bestSrc.y-0.1); break;
+                    default: break;
+                }
+                if(!start || !cur){
+                    failedRoutes.push_back(make_pair(bestSrc,bestDst));
+                    continue;
+                }
+                
+                Point dstPoint = {bestDst.x,bestDst.y};
+                Point curPoint = {bestSrc.x,bestSrc.y};
+
+                //Routing attempt for current source destination pair
+                pathPieces.clear();
+                pathTiles.clear();
+                routeCosts.clear();
+                pathTiles.push_back(start);
+                int route_ittr = 0;
+
+                while(cur && route_ittr++<50){
+                    if(cur->containsPoint(dstPoint.x,dstPoint.y)){
+                        if(!(cur->getAttr()==dst->getAttr() && cur->getNet()==dst->getNet())){
+                            pathTiles.push_back(cur);
+                            pathPieces.push_back(pathInTile(cur,curPoint,dstPoint));
+                            routeCosts.push_back(llabs(curPoint.x - dstPoint.x) + llabs(curPoint.y - dstPoint.y));
+                        }
+                        routed = true;
+                        break;
+                    }
+
+                    vector<CornerStitch*> rightTiles    = rightNeighbors(cur);
+                    vector<CornerStitch*> topTiles      = topNeighbors(cur);
+                    vector<CornerStitch*> leftTiles     = leftNeighbors(cur);
+                    vector<CornerStitch*> bottomTiles   = bottomNeighbors(cur);
+
+                    CornerStitch* next;
+                    Point exit;
+                    long bestCost = LONG_MAX;
+                    for(auto nbrs : {rightTiles,topTiles,leftTiles,bottomTiles}){
+                        for(auto nbr : nbrs){
+                            if(!(nbr->isSpace() || (nbr->getAttr()==src->getAttr() && nbr->getNet()==src->getNet()))
+                                || count(pathTiles.begin(),pathTiles.end(),nbr)>0) continue;
+                            Point candidate = findClosestPoint(nbr,dstPoint);
+                            long cost = llabs(candidate.x - dstPoint.x) + llabs(candidate.y - dstPoint.y);
+                            if(cost < bestCost){
+                                bestCost = cost;
+                                next = nbr;
+                            }
+                        }
+                    }
+
+                    
+                    if(!next || bestCost==LONG_MAX){
+                        if(pathPieces.empty()) break;
+                        curPoint = pathPieces.back().front();
+                        pathPieces.pop_back();
+                        routeCosts.pop_back();
+                        next = pathTiles.back();
+                        pathTiles.pop_back();
+                        pathTiles.push_back(cur);
+                        cur = next;
+                        continue;
+                    }
+
+                    exit = findClosestPoint(next,curPoint);
+                    long pathCost = llabs(curPoint.x - exit.x) + llabs(curPoint.y - exit.y);
+                    pathPieces.push_back(pathInTile(cur,curPoint,exit));
+                    routeCosts.push_back(pathCost);
+                    pathTiles.push_back(cur);
+                    
+
+                    cur = next;
+                    curPoint = exit;
+                    
+                }
+                
+
+                if(routed){
+                    Point current = {bestSrc.x,bestSrc.y}; 
+                    cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
+                    for(auto pathPiece : pathPieces){
+                        for(auto point : pathPiece){
+                            if(point.x==current.x && point.y==current.y) continue;
+                            else if(point.x==current.x) {
+                                long y = point.y>current.y ? current.y : point.y;
+                                long w = llabs(point.y-current.y)+2;
+                                insertTileRect(planeRoots[routePlane],point.x-1,y-1,2,w,src->getAttr(),src->getNet(),1);;
+                            }
+                            else{
+                                long x = point.x>current.x ? current.x : point.x;
+                                long w = llabs(point.x-current.x)+2;
+                                insertTileRect(planeRoots[routePlane],x-1,point.y-1,w,2,src->getAttr(),src->getNet(),1);
+                            }
+                            current = point;
+                        }
+                    }
+                    rebuildRectsByLayer(planeRoots,rectsByLayer);
+                    break;
+                }
+                else failedRoutes.push_back(make_pair(bestSrc,bestDst));
+                cout << "\nRouting between " << bestSrc.x << "," << bestSrc.y << " and " << bestDst.x << "," << bestDst.y << " : " << "fail\n";
+
             }
-            coalesce(planeRoots[0]);
-            rebuildRectsByLayer(planeRoots[0], rectsByLayer);
-            polysByNet.clear();
-            exportTiles(planeRoots[0], "plane0_route.sam");
-
         }
-        if (anyRouteInsertedThisIter) {
-            noProgressIters = 0;
-        } else {
-            noProgressIters++;
-        }
-        cout << "[DEBUG] noProgressIters = " << noProgressIters << "\n";
+        virtualTileCommit(planeRoots[0]);
+        rebuildRectsByLayer(planeRoots,rectsByLayer);
     }
-
-    CornerStitch* substrate = findTileContaining(planeRoots[0], 17, 17);
-    placeContactSquare(planeRoots[0],planeRoots[1],L_M2,0,substrate);
-    exportTiles(planeRoots[0], "plane0_route.sam");
-    exportTiles(planeRoots[1], "plane1_route.sam");
-
     
+    
+    exportTiles(planeRoots[0], "plane0_routed.sam");
+    exportRect(planeRoots,"XNOR2X1_routed.rect");
 
     return 0;
 }
-
