@@ -296,18 +296,7 @@ vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit){
     return result;
 }
 
-bool checkPortAndRouteNormal(const Port& p, const pair<long,long>& next) {
-    long dx = next.first  - p.x;
-    long dy = next.second - p.y;
 
-    switch (p.normal) {
-        case LEFT:  return dx < 0;
-        case RIGHT: return dx > 0;
-        case UP:    return dy > 0;
-        case DOWN:  return dy < 0;
-    }
-    return false;
-}
 
 bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
     if (polys.empty()) return true;

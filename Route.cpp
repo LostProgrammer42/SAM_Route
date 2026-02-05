@@ -4,7 +4,7 @@
 #include <bits/stdc++.h>
 #include "Routing_Helpers.cpp"
 using namespace std;
-
+int z=0;
 
 unordered_map<int, vector<RectRec>> rectsByLayer;
 unordered_map<unsigned int, vector<CornerStitch*>> polysByNet, metalsByNet, lisByNet;
@@ -116,20 +116,23 @@ int main(int argc, char** argv){
             if (iter == 1) {
                 sort(polys.begin(), polys.end(),
                     [](CornerStitch* a, CornerStitch* b) {
-                        if (a->getllx() != b->getllx())
-                            return a->getllx() < b->getllx();
-                        return a->getlly() < b->getlly();
+                        float cxa = (a->getllx()+a->geturx())/2;
+                        float cxb = (b->getllx()+b->geturx())/2;
+                        float cya = (a->getlly()+a->getury())/2;
+                        float cyb = (b->getlly()+b->getury())/2;
+                        if (abs(cxa-cxb) > 0.1) 
+                            return cxa < cxb;
+                        return cya < cyb;
                     });
 
-                for (size_t i = 0; i + 1 < polys.size(); ) {
-                    CornerStitch* a = polys[i];
-                    CornerStitch* b = polys[i + 1];
-
-                    if (a->getllx() == b->getllx()) {
-                        routePairs.push_back({a->getllx(), a->getlly(), b->getllx(), b->getlly(), net});
-                        i += 2;
-                    } else {
-                        i += 1;
+                for (size_t i = 0; i < polys.size(); i++) {
+                    for (size_t j = i + 1; j < polys.size(); j++) {
+                        float a = (polys[i]->getllx()+polys[i]->geturx())/2;
+                        float b = (polys[j]->getllx()+polys[j]->geturx())/2;
+                        if (abs(a-b) < 0.1) {
+                            routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[j]->getllx(), polys[j]->getlly(), net});
+                            break;
+                        }
                     }
                 }
                 continue;
@@ -139,16 +142,22 @@ int main(int argc, char** argv){
             if (iter == 2) {
                 sort(polys.begin(), polys.end(),
                     [](CornerStitch* a, CornerStitch* b) {
-                        if (a->getlly() != b->getlly())
-                            return a->getlly() < b->getlly();
-                        return a->getllx() < b->getllx();
+                        float cxa = (a->getllx()+a->geturx())/2;
+                        float cxb = (b->getllx()+b->geturx())/2;
+                        float cya = (a->getlly()+a->getury())/2;
+                        float cyb = (b->getlly()+b->getury())/2;
+                        if (abs(cya-cyb) > 0.1) 
+                            return cya < cyb;
+                        return cxa < cxb;
                     });
 
                 vector<bool> used(polys.size(), false);
 
                 for (size_t i = 0; i < polys.size(); i++) {
                     for (size_t j = i + 1; j < polys.size(); j++) {
-                        if (polys[i]->getlly() == polys[j]->getlly()) {
+                        float a = (polys[i]->getlly()+polys[i]->getury())/2;
+                        float b = (polys[j]->getlly()+polys[j]->getury())/2;
+                        if (abs(a-b) < 0.1) {
                             routePairs.push_back({polys[i]->getllx(), polys[i]->getlly(), polys[j]->getllx(), polys[j]->getlly(), net});
                             break;
                         }
@@ -317,6 +326,7 @@ int main(int argc, char** argv){
                 
                 if(failedRoutes.size() == srcPorts.size() *  dstPorts.size()) break;
                 CornerStitch* start = findTileContaining(bloatedRoots[routePlane], src->getllx()+0.1, src->getlly()+0.1);
+                CornerStitch* end = findTileContaining(bloatedRoots[routePlane], dst->getllx()+0.1, dst->getlly()+0.1);                
                 CornerStitch* cur;
                 switch(bestSrc.normal){
                     case LEFT:  cur = findTileContaining(bloatedRoots[routePlane], bestSrc.x-0.1,bestSrc.y); break;
@@ -330,9 +340,10 @@ int main(int argc, char** argv){
                     continue;
                 }
                 
+
+                
                 Point dstPoint = {bestDst.x,bestDst.y};
                 Point curPoint = {bestSrc.x,bestSrc.y};
-
                 //Routing attempt for current source destination pair
                 pathPieces.clear();
                 pathTiles.clear();
@@ -341,14 +352,15 @@ int main(int argc, char** argv){
                 int route_ittr = 0;
 
                 while(cur && route_ittr++<50){
-                    if(cur->containsPoint(dstPoint.x,dstPoint.y)){
+                    if(cur->containsPointAllEdges(dstPoint.x,dstPoint.y)){
                         if(!(cur->getAttr()==dst->getAttr() && cur->getNet()==dst->getNet())){
                             pathTiles.push_back(cur);
                             pathPieces.push_back(pathInTile(cur,curPoint,dstPoint));
                             routeCosts.push_back(llabs(curPoint.x - dstPoint.x) + llabs(curPoint.y - dstPoint.y));
+                            routed = true;
+                            break;
                         }
-                        routed = true;
-                        break;
+                        if(cur == end) break;
                     }
 
                     vector<CornerStitch*> rightTiles    = rightNeighbors(cur);
@@ -390,15 +402,14 @@ int main(int argc, char** argv){
                     pathPieces.push_back(pathInTile(cur,curPoint,exit));
                     routeCosts.push_back(pathCost);
                     pathTiles.push_back(cur);
-                    
 
                     cur = next;
                     curPoint = exit;
                     
                 }
-                
 
                 if(routed){
+                    exportTiles(bloatedRoots[0], "plane0_pre_route.sam");
                     Point current = {bestSrc.x,bestSrc.y}; 
                     cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
                     for(auto pathPiece : pathPieces){
@@ -418,6 +429,11 @@ int main(int argc, char** argv){
                         }
                     }
                     rebuildRectsByLayer(planeRoots,rectsByLayer);
+                    if(++z == 20) {
+                        virtualTileCommit(planeRoots[0]);
+                        exportTiles(planeRoots[0], "plane0_routed.sam");        
+                        assert(false);
+                    }
                     break;
                 }
                 else failedRoutes.push_back(make_pair(bestSrc,bestDst));
@@ -428,10 +444,11 @@ int main(int argc, char** argv){
         virtualTileCommit(planeRoots[0]);
         rebuildRectsByLayer(planeRoots,rectsByLayer);
     }
-    
-    
+
+    CornerStitch* tile = findTileContaining(planeRoots[0],12,19);
+    splitRightToMatchLeft(planeRoots[0],tile,tile->right());
     exportTiles(planeRoots[0], "plane0_routed.sam");
-    exportRect(planeRoots,"XNOR2X1_routed.rect");
+    exportRect(planeRoots,"spaghetti_routed.rect");
 
     return 0;
 }

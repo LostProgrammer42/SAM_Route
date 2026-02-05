@@ -108,6 +108,9 @@ class CornerStitch{
         bool containsPoint(float x, float y) const {
             return (getllx() <= x && x < geturx() && getlly() <= y && y < getury());
         }
+        bool containsPointAllEdges(float x, float y) const {
+            return (getllx() <= x && x <= geturx() && getlly() <= y && y <= getury());
+        }
 
         bool intersectsRect(float lx, float ly, float wx, float wy) const {
             if (geturx() <= lx) return false;
@@ -355,9 +358,9 @@ bool splitVertical(CornerStitch* t, long splitX) {
 }
 
 // For each tile crossing the vertical line x, split it (creating a right piece)
-bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
+bool splitVerticalEdge(CornerStitch* anchor, float x, float y0, float y1) {
     if (!anchor || !(y0 < y1)) return false;
-    long y = y0;
+    float y = y0;
     const int MAX_STEPS = 100000;
     int steps = 0;
 
@@ -385,9 +388,9 @@ bool splitVerticalEdge(CornerStitch* anchor, long x, long y0, long y1) {
 }
 
 // For each tile crossing the horizontal line y, split it (creating top pieces)
-bool splitHorizontalEdge(CornerStitch* anchor, long y, long x0, long x1) {
+bool splitHorizontalEdge(CornerStitch* anchor, float y, float x0, float x1) {
     if (!anchor || !(x0 < x1)) return false;
-    long x = x0;
+    float x = x0;
     const int MAX_STEPS = 100000;
     int steps = 0;
 
@@ -511,12 +514,9 @@ bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStit
     if (ly == right->getlly() && uy == right->getury()) return true;
 
     // Split right column only where required
-    if (right->getlly() <= ly && ly <= right->getury()) {
-        if (!splitHorizontalEdge(anchor, ly, x0, x1)) return false;
-    }
-    else return false;
-    if (right->getlly() <= uy && uy <= right->getury()) {
-        if (!splitHorizontalEdge(anchor, uy, x0, x1)) return false;
+    if (right->getlly() <= ly && ly <= right->getury() && right->getlly() <= uy && uy <= right->getury()) {
+        if (!splitHorizontalEdge(anchor, ly, x0+0.1, x1-0.1)) return false;
+        if (!splitHorizontalEdge(anchor, uy, x0+0.1, x1-0.1)) return false;
     }
     else return false;
     return true;
@@ -552,12 +552,12 @@ bool splitLeftToMatchRight(CornerStitch* &anchor, CornerStitch* left, CornerStit
 bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (left->getNet() != right->getNet()) return false;    
+    if (left->getNet() != right->getNet()) return false; 
+    if (left->isVirt() != right->isVirt()) return false;   
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
     // ensure right column has a slice that matches left's vertical span
     if (!splitRightToMatchLeft(anchor, left, right)) return false;
-
     // probe a point inside the matching vertical span, but inside the right column
     long probeX = right->getllx() + 0.1;
     long probeY = left->getlly() + 0.1;
@@ -589,6 +589,7 @@ bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch*
 bool alignAndMergeLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (right->left() != left) return false;
+    if (left->isVirt() != right->isVirt()) return false;
     if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
@@ -607,7 +608,7 @@ bool alignAndMergeLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* 
     }
 
     // verify the found tile lives in left column and matches vertical span
-    if (matching->getllx() != left->getllx() || matching->getlly() != right->getlly() || matching->getury() != right->getury())
+    if (matching->geturx() != left->geturx() || matching->getlly() != right->getlly() || matching->getury() != right->getury())
         return false;
 
     // Now the tile immediately right of 'matching' should be a tile we can merge with.
@@ -696,8 +697,8 @@ int coalesce(CornerStitch* &anchor, int maxRounds = 20) {
     if (!anchor) return 0;
     int total = 0;
     for (int r = 0; r < maxRounds; ++r) {
-        int v = passMergeVerticalSimple(anchor);
         int h = passAlignAndMergeHorizontally(anchor);
+        int v = passMergeVerticalSimple(anchor);
         total += h + v;
         if (h == 0 && v == 0) break;
     }
@@ -744,26 +745,25 @@ bool insertTileRect(CornerStitch* &anchor,
     for (auto t : intersect0) if (t && !(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
 
      // Split horizontal edges first (bottom and top) for horizontal span [lx, rx)
-    if (!splitHorizontalEdge(anchor, ly, lx, rx)) return false;
-    if (!splitHorizontalEdge(anchor, ry, lx, rx)) return false;
+    if (!splitHorizontalEdge(anchor, ly, lx+0.1, rx-0.1)) return false;
+    if (!splitHorizontalEdge(anchor, ry, lx+0.1, rx-0.1)) return false;
 
     // Then split vertical edges along x = lx and x = rx for full vertical span [ly, ry)
-    if (!splitVerticalEdge(anchor, lx, ly, ry)) return false;
-    if (!splitVerticalEdge(anchor, rx, ly, ry)) return false;
+    if (!splitVerticalEdge(anchor, lx, ly+0.1, ry-0.1)) return false;
+    if (!splitVerticalEdge(anchor, rx, ly+0.1, ry-0.1)) return false;
     // Now collect tiles that intersect the rectangle (they should be aligned to the rectangle grid)
     auto finalTiles = tilesInRect(anchor, lx, ly, wx, wy);
 
     // Mark tiles fully inside rectangle as occupied (space=0) and set attr/net.
     for (auto t : finalTiles) {
         if (!t) continue;
-        if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
+        if (!(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
+        else if(!t->isVirt() && !t->isSpace()) continue;
+        else if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
             t->setSpace(0);
             t->setAttr(attr);
             t->setNet(net);
             t->setVirt(virt);
-        } else {
-            // If any overlapping but not fully-contained tile is already occupied -> collision
-            if (!(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
         }
     }
 
