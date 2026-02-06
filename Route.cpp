@@ -355,7 +355,8 @@ int main(int argc, char** argv){
                     if(cur->containsPointAllEdges(dstPoint.x,dstPoint.y)){
                         if(!(cur->getAttr()==dst->getAttr() && cur->getNet()==dst->getNet())){
                             pathTiles.push_back(cur);
-                            pathPieces.push_back(pathInTile(cur,curPoint,dstPoint));
+                            bool dir = inferPreferHorizontal(pathPieces, true);
+                            pathPieces.push_back(pathInTile(cur,curPoint,dstPoint,dir));
                             routeCosts.push_back(llabs(curPoint.x - dstPoint.x) + llabs(curPoint.y - dstPoint.y));
                             routed = true;
                             break;
@@ -399,7 +400,8 @@ int main(int argc, char** argv){
 
                     exit = findClosestPoint(next,curPoint);
                     long pathCost = llabs(curPoint.x - exit.x) + llabs(curPoint.y - exit.y);
-                    pathPieces.push_back(pathInTile(cur,curPoint,exit));
+                    bool dir = inferPreferHorizontal(pathPieces, true);
+                    pathPieces.push_back(pathInTile(cur,curPoint,exit, dir));
                     routeCosts.push_back(pathCost);
                     pathTiles.push_back(cur);
 
@@ -448,7 +450,7 @@ int main(int argc, char** argv){
     CornerStitch* tile = findTileContaining(planeRoots[0],12,19);
     splitRightToMatchLeft(planeRoots[0],tile,tile->right());
     exportTiles(planeRoots[0], "plane0_routed.sam");
-    exportRect(planeRoots,"spaghetti_routed.rect");
+    //exportRect(planeRoots,"XNOR2X1_routed.rect");
 
     return 0;
 }
