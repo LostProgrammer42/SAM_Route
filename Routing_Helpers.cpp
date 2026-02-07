@@ -265,49 +265,76 @@ vector<Port> getPorts(
     return ports;
 }
 
+bool inferPreferHorizontal(const vector<vector<Point>>& pathPieces, bool defaultDir)
+{
+    if (pathPieces.empty()) return defaultDir;
 
-vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit){
+    const auto& last = pathPieces.back();
+    if (last.size() < 2) return defaultDir;
+
+    const Point& a = last[last.size() - 2];
+    const Point& b = last[last.size() - 1];
+
+    if (a.y == b.y) return true;
+    if (a.x == b.x) return false;
+
+    return defaultDir;
+}
+
+
+vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit, bool preferHorizontal)
+{
     vector<Point> result;
-    if(!t) return result;
-    long x1=entry.x, y1=entry.y, x2=exit.x, y2=exit.y;
-    result.push_back({x1,y1});
-    if(x1==x2 && y1==y2) return result;
-    if(x1==x2 || y1==y2) {
-        result.push_back({x2,y2});
+    if (!t) return result;
+
+    long x1 = entry.x, y1 = entry.y;
+    long x2 = exit.x,  y2 = exit.y;
+
+    result.push_back({x1, y1});
+
+    // Trivial cases
+    if (x1 == x2 && y1 == y2) return result;
+    if (x1 == x2 || y1 == y2) {
+        result.push_back({x2, y2});
         return result;
     }
-    long cx = (x1+x2)/2;
-    long cy = (y1+y2)/2;
-    if((x1==t->getllx() || x1==t->geturx())){
-        if(x2==t->getllx() || x2==t->geturx()){
-            result.push_back({cx,y1});
-            result.push_back({cx,y2});
-        }
-        else result.push_back({x2,y1});
+
+    // Determine possible bend points
+    Point hFirst = {x2, y1};  // horizontal → vertical
+    Point vFirst = {x1, y2};  // vertical → horizontal
+
+    auto insideTile = [&](Point p) {
+        return p.x >= t->getllx() && p.x <= t->geturx() &&
+               p.y >= t->getlly() && p.y <= t->getury();
+    };
+
+    // Prefer continuing direction if valid
+    if (preferHorizontal && insideTile(hFirst)) {
+        result.push_back(hFirst);
     }
-    else if((y1==t->getlly() || y1==t->getury())){
-        if(y2==t->getlly() || y2==t->getury()){
-            result.push_back({x1,cy});
-            result.push_back({x2,cy});
-        }
-        else result.push_back({x1,y2});   
+    else if (!preferHorizontal && insideTile(vFirst)) {
+        result.push_back(vFirst);
     }
-    result.push_back({x2,y2});
+    else if (insideTile(hFirst)) {
+        result.push_back(hFirst);
+    }
+    else if (insideTile(vFirst)) {
+        result.push_back(vFirst);
+    }
+    else {
+        // Fallback: midpoint (should be rare)
+        long cx = (x1 + x2) / 2;
+        long cy = (y1 + y2) / 2;
+        result.push_back({cx, y1});
+        result.push_back({cx, y2});
+    }
+
+    result.push_back({x2, y2});
     return result;
 }
 
-bool checkPortAndRouteNormal(const Port& p, const pair<long,long>& next) {
-    long dx = next.first  - p.x;
-    long dy = next.second - p.y;
 
-    switch (p.normal) {
-        case LEFT:  return dx < 0;
-        case RIGHT: return dx > 0;
-        case UP:    return dy > 0;
-        case DOWN:  return dy < 0;
-    }
-    return false;
-}
+
 
 bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
     if (polys.empty()) return true;
