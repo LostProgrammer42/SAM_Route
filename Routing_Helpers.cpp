@@ -83,7 +83,7 @@ long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
     if (layer == "polysilicon") return 3;
-    if (layer == "m1") return 0;
+    if (layer == "m1") return 2;
     if (layer == "m2") return 0;
     return 0;
 }

@@ -423,6 +423,15 @@ bool attemptRoutePair(
         if (routed) {
             Point current = {bestSrc.x, bestSrc.y};
             cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
+            for (size_t i = 0; i < pathPieces.size(); i++) {
+                cout << "PathPiece " << i << ": ";
+                for (size_t j = 0; j < pathPieces[i].size(); j++) {
+                    cout << "(" << pathPieces[i][j].x << ", " << pathPieces[i][j].y << ") ";
+                }
+                cout << endl;
+            }
+
+
             for (auto &pathPiece : pathPieces) {
                 for (auto &point : pathPiece) {
                     if (point.x == current.x && point.y == current.y) continue;
@@ -507,7 +516,7 @@ void routeLayer(
         attemptRoutePair(rpair, routePlane, planeRoots, bloatedRoots, rectsByLayer, iter);
     }
 
-    virtualTileCommit(planeRoots[0]);
+    virtualTileCommit(planeRoots[routePlane]);
     rebuildRectsByLayer(planeRoots, rectsByLayer);
 }
 
@@ -551,7 +560,7 @@ int main(int argc, char** argv) {
         routingAttrs.push_back(L_POLY);
     }
     routingAttrs.push_back(L_M1);
-    int MAX_ITERS = 3;
+    int MAX_ITERS = 1;
     int iter = 0;
 
     substrateByNet.clear();
@@ -571,42 +580,97 @@ int main(int argc, char** argv) {
         }
     }
 
-    while (true) {
-        cout << "Iteration: " << iter + 1 << " \n";
-        if (iter++ > MAX_ITERS) { cout << "Max Iterations Reached\n"; break; }
+    // while (true) {
+    //     cout << "Iteration: " << iter + 1 << " \n";
+    //     if (iter++ > MAX_ITERS) { cout << "Max Iterations Reached\n"; break; }
 
-        for (int attr : routingAttrs) {
-            routeLayer(attr, planeRoots, bloatedRoots, rectsByLayer, iter);
-        }
+    //     for (int attr : routingAttrs) {
+    //         routeLayer(attr, planeRoots, bloatedRoots, rectsByLayer, iter);
+    //     }
 
-        polysByNet.clear(); metalsByNet.clear(); lisByNet.clear();
-        rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
-        rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
-        rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
+    //     polysByNet.clear(); metalsByNet.clear(); lisByNet.clear();
+    //     rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
+    //     rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
+    //     rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
 
-        // Remove nets that we know are fully routed
-        if (fullyRoutedNetsByAttr.count(L_POLY)) {
-            for (auto netId : fullyRoutedNetsByAttr[L_POLY]) polysByNet.erase(netId);
-        }
-        if (fullyRoutedNetsByAttr.count(L_LI)) {
-            for (auto netId : fullyRoutedNetsByAttr[L_LI]) lisByNet.erase(netId);
-        }
-        if (fullyRoutedNetsByAttr.count(L_M1)) {
-            for (auto netId : fullyRoutedNetsByAttr[L_M1]) metalsByNet.erase(netId);
-        }
+    //     // Remove nets that we know are fully routed
+    //     if (fullyRoutedNetsByAttr.count(L_POLY)) {
+    //         for (auto netId : fullyRoutedNetsByAttr[L_POLY]) polysByNet.erase(netId);
+    //     }
+    //     if (fullyRoutedNetsByAttr.count(L_LI)) {
+    //         for (auto netId : fullyRoutedNetsByAttr[L_LI]) lisByNet.erase(netId);
+    //     }
+    //     if (fullyRoutedNetsByAttr.count(L_M1)) {
+    //         for (auto netId : fullyRoutedNetsByAttr[L_M1]) metalsByNet.erase(netId);
+    //     }
 
-       auto allDone = [](const unordered_map<unsigned int, vector<CornerStitch*>> &m) {
-            for (const auto &kv : m) {
-                if (kv.first == getNetId("#")) continue;
-                if (kv.second.size() > 1) return false;
+    //    auto allDone = [](const unordered_map<unsigned int, vector<CornerStitch*>> &m) {
+    //         for (const auto &kv : m) {
+    //             if (kv.first == getNetId("#")) continue;
+    //             if (kv.second.size() > 1) return false;
+    //         }
+    //         return true;
+    //     };
+
+    //     if (allDone(metalsByNet) && allDone(polysByNet)){
+    //         break;
+    //     }
+    // }
+
+    for (int layer : routingAttrs) {
+        int iter = 0;
+
+        while (true) {
+            cout << "Layer " << layer << " Iteration: " << iter + 1 << "\n";
+            if (iter++ > MAX_ITERS) {
+                cout << "Max Iterations Reached for layer " << layer << "\n";
+                break;
             }
-            return true;
-        };
 
-        if (allDone(metalsByNet) && allDone(polysByNet)){
-            break;
+            // Route ONLY this layer
+            routeLayer(layer, planeRoots, bloatedRoots, rectsByLayer, iter);
+
+            polysByNet.clear();
+            metalsByNet.clear();
+            lisByNet.clear();
+
+            rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
+            rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
+            rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
+
+            // Remove fully routed nets
+            if (fullyRoutedNetsByAttr.count(L_POLY)) {
+                for (auto netId : fullyRoutedNetsByAttr[L_POLY])
+                    polysByNet.erase(netId);
+            }
+            if (fullyRoutedNetsByAttr.count(L_LI)) {
+                for (auto netId : fullyRoutedNetsByAttr[L_LI])
+                    lisByNet.erase(netId);
+            }
+            if (fullyRoutedNetsByAttr.count(L_M1)) {
+                for (auto netId : fullyRoutedNetsByAttr[L_M1])
+                    metalsByNet.erase(netId);
+            }
+
+            auto allDone = [](const unordered_map<unsigned int, vector<CornerStitch*>> &m) {
+                for (const auto &kv : m) {
+                    if (kv.first == getNetId("#")) continue;
+                    if (kv.second.size() > 1) return false;
+                }
+                return true;
+            };
+
+            bool done = false;
+            if (layer == L_POLY) done = allDone(polysByNet);
+            else if (layer == L_M1) done = allDone(metalsByNet);
+
+            if (done) {
+                cout << "Layer " << attrToLayer(layer) << " fully routed\n";
+                break;
+            }
         }
     }
+
 
     exportTiles(planeRoots[0], "plane0_routed.sam");
     exportTiles(planeRoots[1], "plane1_routed.sam");
