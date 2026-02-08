@@ -70,7 +70,6 @@ int main(int argc, char** argv){
     
     vector<long> routeCosts;
     vector<vector<Point>> pathPieces;
-    vector<CornerStitch*> pathTiles;
     vector<string> layers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m2"};
     int MAX_ITERS = 8;
     int iter = 0;
@@ -349,15 +348,9 @@ int main(int argc, char** argv){
                 }
                 
 
-                
-                // Point dstPoint = {bestDst.x,bestDst.y};
-                // Point curPoint = {bestSrc.x,bestSrc.y};
-                // Routing attempt for current source destination pair
                 pathPieces.clear();
-                // pathTiles.clear();
                 routeCosts.clear();
-                // pathTiles.push_back(start);
-                // int route_ittr = 0;
+                
 
                 // ---------- BIDIRECTIONAL ROUTING ATTEMPT ----------
 
@@ -378,7 +371,7 @@ int main(int argc, char** argv){
                 int route_ittr = 0;
                 bool meet = false;
 
-                // One-step greedy advance (mirrors your existing logic)
+                // One-step greedy advance 
                 auto advanceOneStep =
                 [&](CornerStitch*& cur,
                     Point& curPoint,

@@ -358,7 +358,7 @@ bool splitVertical(CornerStitch* t, long splitX) {
 }
 
 // For each tile crossing the vertical line x, split it (creating a right piece)
-bool splitVerticalEdge(CornerStitch* anchor, float x, float y0, float y1) {
+bool splitVerticalEdge(CornerStitch*& anchor, long x, float y0, float y1) {
     if (!anchor || !(y0 < y1)) return false;
     float y = y0;
     const int MAX_STEPS = 100000;
@@ -367,7 +367,7 @@ bool splitVerticalEdge(CornerStitch* anchor, float x, float y0, float y1) {
     while (y < y1) {
         if (++steps > MAX_STEPS) return false;
         // find tile that contains (x-1, y) — tile immediately left of the split at this y
-        CornerStitch* leftTile = findTileContaining(anchor, x - 1, y+0.1);
+        CornerStitch* leftTile = findTileContaining(anchor, x - 0.1, y);
         if (!leftTile) return false;
 
         // If the tile does not cross the split line (its right <= x), advance to its top
@@ -388,7 +388,7 @@ bool splitVerticalEdge(CornerStitch* anchor, float x, float y0, float y1) {
 }
 
 // For each tile crossing the horizontal line y, split it (creating top pieces)
-bool splitHorizontalEdge(CornerStitch* anchor, float y, float x0, float x1) {
+bool splitHorizontalEdge(CornerStitch*& anchor, long y, float x0, float x1) {
     if (!anchor || !(x0 < x1)) return false;
     float x = x0;
     const int MAX_STEPS = 100000;
@@ -397,7 +397,7 @@ bool splitHorizontalEdge(CornerStitch* anchor, float y, float x0, float x1) {
     while (x < x1) {
         if (++steps > MAX_STEPS) return false;
         // find tile containing (x, y-1) — tile immediately below the split at this x
-        CornerStitch* belowTile = findTileContaining(anchor, x, y - 1);
+        CornerStitch* belowTile = findTileContaining(anchor, x, y - 0.1);
         if (!belowTile) return false;
 
         // If the tile does not cross the split line (its top <= y), advance to its right edge
@@ -805,8 +805,8 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
         if (!splitHorizontalEdge(t, probe->lly(), probe->llx()+0.1, probe->llx() + probe->wx()-0.2)) return false;
         if (!splitHorizontalEdge(t, probe->lly() + probe->wy(), probe->llx()+0.1, probe->llx() + probe->wx()-0.2)) return false;
         if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.1, probe->lly()-0.1 + probe->wy())) return false;
-        if (!splitVerticalEdge(t, probe->llx() + probe->wx(), probe->lly()+0.1, probe->lly() + probe->wy())) return false;
-        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),probe->wx(),probe->wy())){
+        if (!splitVerticalEdge(t, probe->llx() + probe->wx(), probe->lly()+0.1, probe->lly() + probe->wy()-0.2)) return false;
+        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),probe->wx(),probe->wy()-0.2)){
             if(!tile || !tile->isSpace()) continue;
             tile->setSpace(0);
             tile->setAttr(t->getAttr());

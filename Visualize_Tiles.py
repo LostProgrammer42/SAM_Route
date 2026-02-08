@@ -4,8 +4,8 @@ from matplotlib.patches import Rectangle
 
 # ---------- CONFIG ----------
 plane_files = [
-    ("plane0_routed.sam", 0)
-    #("plane1_bloated.sam", 1)
+    #("plane0_routed.sam", 0),
+    ("plane1_bloated.sam", 1)
     # ("plane2.sam", 2),
 ]
 
@@ -93,5 +93,5 @@ ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
 ax.set_xlim(min(xs) - 5, max(xs) + 5)
 ax.set_ylim(min(ys) - 5, max(ys) + 5)
 
-plt.savefig("Plane_0_Bloated.png")
+#plt.savefig("Plane_0_Bloated.png")
 plt.show()

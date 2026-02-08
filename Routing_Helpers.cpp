@@ -83,7 +83,7 @@ long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
     if (layer == "polysilicon") return 3;
-    if (layer == "m1") return 0;
+    if (layer == "m1") return 3;
     if (layer == "m2") return 0;
     return 0;
 }
@@ -232,10 +232,10 @@ vector<Port> getPorts(
         for (int i = 1; i <= NSy; i++) {
             long y = ly + (i * h) / (NSy + 1);
 
-            if (freeInBloated(lx - 1, y))
+            if (freeInBloated(lx - 0.1, y))
                 ports.push_back({lx, y, LEFT});
 
-            if (freeInBloated(rx + 1, y))
+            if (freeInBloated(rx + 0.1, y))
                 ports.push_back({rx, y, RIGHT});
         }
 
@@ -243,10 +243,10 @@ vector<Port> getPorts(
         for (int i = 1; i <= NSx; i++) {
             long x = lx + (i * w) / (NSx + 1);
 
-            if (freeInBloated(x, ly - 1))
+            if (freeInBloated(x, ly - 0.1))
                 ports.push_back({x, ly, DOWN});
 
-            if (freeInBloated(x, ry + 1))
+            if (freeInBloated(x, ry + 0.1))
                 ports.push_back({x, ry, UP});
         }
     }
@@ -262,7 +262,7 @@ vector<Port> getPorts(
         }
     }
 
-    return ports;
+    return result;
 }
 
 bool inferPreferHorizontal(const vector<vector<Point>>& pathPieces, bool defaultDir)
@@ -363,7 +363,7 @@ bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
 
 Point findClosestPoint(CornerStitch* t, Point dest){
     if(!t) return dest;
-    if(t->containsPoint(dest.x,dest.y)) return dest;
+    if(t->containsPointAllEdges(dest.x,dest.y)) return dest;
     if(t->getllx()<=dest.x && dest.x<t->geturx()){
         if(llabs(dest.y-t->getlly()) > llabs(dest.y-t->getury())) return {dest.x,t->getury()};
         else return {dest.x,t->getlly()};
@@ -445,4 +445,55 @@ void rebuildLayerByNet(
             }
         }
     }
+}
+
+bool placeContactSquare(
+    CornerStitch* substrateRoot,
+    CornerStitch* squareRoot,
+    unsigned int squareAttr,
+    int side,
+    CornerStitch* substrateTile,
+    unsigned int net = 0
+) {
+    if (!substrateTile || !squareRoot) return false;
+
+    long lx = substrateTile->getllx();
+    long rx = substrateTile->geturx();
+    long ly = substrateTile->getlly();
+    long ry = substrateTile->getury();
+
+    const long SQ = 5;
+    const long MIN_MARGIN = 1;
+
+    long tileWidth  = rx - lx;
+    long tileHeight = ry - ly;
+
+    
+
+    long MARGIN = (tileWidth - SQ) / 2;
+    
+
+    long square_lx = lx + MARGIN;
+
+    long square_ly;
+    if (side == 0) {
+        square_ly = ry - MARGIN - SQ;
+    } else {
+        square_ly = ly + MARGIN;
+    }
+
+    bool ok = insertTileRect(
+        squareRoot,
+        square_lx,
+        square_ly,
+        SQ,
+        SQ,
+        squareAttr,
+        substrateTile->getNet()
+    );
+
+    if (!ok) return false;
+
+    coalesce(squareRoot, 10);
+    return true;
 }

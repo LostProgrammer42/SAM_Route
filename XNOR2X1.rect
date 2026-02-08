@@ -53,8 +53,8 @@ rect # ptransistor 63 23 65 38
 rect # polysilicon 63 38 65 40
 rect #10 ndiffusion 58 6 63 16 left
 rect #8 pdiffusion 58 23 63 38 left
-inrect GND m1 80 40 84 44
-inrect Vdd m1 56 40 60 44
-inrect B m1 32 40 36 44
-outrect Y m1 8 4 12 8
-inrect A m1 8 40 12 44
+yo GND m1 80 40 84 44
+yo Vdd m1 56 40 60 44
+yo B m1 32 40 36 44
+yo Y m1 8 4 12 8
+yo A m1 8 40 12 44
