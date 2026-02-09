@@ -102,7 +102,7 @@ struct RectRec {
     unsigned long wx, wy;
 };
 
-enum Dir { LEFT, RIGHT, UP, DOWN };
+enum Dir { LEFT=0, RIGHT, UP, DOWN };
 struct Point {
     long x, y;
     bool operator==(const Point& other) const {
@@ -260,11 +260,11 @@ vector<Port> getPorts(
 
     for(auto port : ports){
         switch(port.normal){
-            case LEFT:  if(findTileContaining(t,port.x-0.1,port.y)->isSpace()) result.push_back(port);
-            case RIGHT: if(findTileContaining(t,port.x+0.1,port.y)->isSpace()) result.push_back(port);
-            case UP:    if(findTileContaining(t,port.x,port.y+0.1)->isSpace()) result.push_back(port);
-            case DOWN:  if(findTileContaining(t,port.x,port.y-0.1)->isSpace()) result.push_back(port);
-            default: continue;
+            case LEFT:  if(findTileContaining(t,port.x-0.1,port.y)->isSpace()) result.push_back(port); break;
+            case RIGHT: if(findTileContaining(t,port.x+0.1,port.y)->isSpace()) result.push_back(port); break;
+            case UP:    if(findTileContaining(t,port.x,port.y+0.1)->isSpace()) result.push_back(port); break;
+            case DOWN:  if(findTileContaining(t,port.x,port.y-0.1)->isSpace()) result.push_back(port); break;
+            default: break;
         }
     }
 

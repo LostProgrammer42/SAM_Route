@@ -270,7 +270,7 @@ bool attemptRoutePair(
     vector<pair<Port, Port>> failedRoutes;
     bool routed = false;
     vector<vector<Point>> pathPiecesG;
-    vector<long> routeCostsG;
+    vector<unsigned long> routeCostsG;
 
     while (true) {
         Port bestSrc, bestDst;
@@ -321,7 +321,7 @@ bool attemptRoutePair(
         vector<vector<Point>> pathPiecesS;
         vector<CornerStitch*> pathTilesS;
         vector<CornerStitch*> visitedTilesS;
-        vector<long> routeCostsS;
+        vector<unsigned long> routeCostsS;
         pathTilesS.push_back(start);
         visitedTilesS.push_back(start);
 
@@ -330,7 +330,7 @@ bool attemptRoutePair(
         vector<vector<Point>> pathPiecesD;
         vector<CornerStitch*> pathTilesD;
         vector<CornerStitch*> visitedTilesD;
-        vector<long> routeCostsD;
+        vector<unsigned long> routeCostsD;
         pathTilesD.push_back(end);
         visitedTilesD.push_back(end);
 
@@ -338,7 +338,7 @@ bool attemptRoutePair(
         bool meet = false;
 
         auto advanceOneStep = [&](CornerStitch*& cur, Point& curPoint, const Point& targetPoint,
-            vector<long>& routeCosts, vector<vector<Point>>& pathPieces, vector<CornerStitch*>& pathTiles,
+            vector<unsigned long>& routeCosts, vector<vector<Point>>& pathPieces, vector<CornerStitch*>& pathTiles,
             vector<CornerStitch*>& visitedTiles) -> bool{
 
             long MAX_TRIES = 1000;
@@ -403,7 +403,7 @@ bool attemptRoutePair(
                 pathPieces.push_back(pathInTile(cur, curPoint, exit, dir));
                 pathTiles.push_back(cur);
                 visitedTiles.push_back(cur);
-                long pathCost = llabs(curPoint.x - exit.x) + llabs(curPoint.y - exit.y);
+                unsigned long pathCost = llabs(curPoint.x - exit.x) + llabs(curPoint.y - exit.y);
                 routeCosts.push_back(pathCost);
 
                 cur = next;

@@ -808,7 +808,6 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
         if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.1, probe->lly()-0.1 + (long)probe->wy())) return false;
         if (!splitVerticalEdge(t, probe->llx() + (long)probe->wx(), probe->lly()+0.1, probe->lly() + (long)probe->wy()-0.2)) return false;
         for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),(long)probe->wx(),(long)probe->wy())){
-            if(tile && end) {tile->setSpace(0); tile->setAttr(51);}
             if(!tile || !tile->isSpace()) continue;
             tile->setSpace(0);
             tile->setAttr(t->getAttr());
