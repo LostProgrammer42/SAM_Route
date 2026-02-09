@@ -5,16 +5,19 @@ using namespace std;
 int layerToPlane(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion" ||
         layer == "ntransistor" || layer == "ptransistor")
-        return 0; // diffusion, devices
+        return 0; // diffusion, transistors
 
     if (layer == "polysilicon")
         return 0    ; // poly
     
+    if (layer == "li")
+        return 1; //local interconnect
+
     if (layer == "m1")
-        return 1;    
+        return 1;    //metal1
 
     if (layer == "m2")
-        return 2; // metal
+        return 2; // metal2
 
     return -1; 
 }
@@ -38,7 +41,7 @@ bool parseRectLine(
     string& net,
     string& layer,
     long& lx, long& ly,
-    long& wx, long& wy
+    unsigned long& wx, unsigned long& wy
 ) {
     if (line.empty() || line[0] == '#')
         return false;
@@ -74,15 +77,17 @@ unsigned int layerToAttr(const string& layer) {
     if (layer == "ntransistor")  return L_NTRANS;
     if (layer == "ptransistor")  return L_PTRANS;
     if (layer == "polysilicon")  return L_POLY;
+    if (layer == "li")           return L_LI;
     if (layer == "m1")           return L_M1;    
     if (layer == "m2")           return L_M2;
     return L_NONE;
 }
 
-long layerBloat(const string& layer) {
+unsigned long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
     if (layer == "polysilicon") return 3;
+    if (layer == "li") return 5;
     if (layer == "m1") return 3;
     if (layer == "m2") return 0;
     return 0;
@@ -93,7 +98,8 @@ struct RectRec {
     string layer;
     unsigned int attr;
     unsigned int net;
-    long lx, ly, wx, wy;
+    long lx, ly;
+    unsigned long wx, wy;
 };
 
 enum Dir { LEFT, RIGHT, UP, DOWN };
@@ -408,8 +414,8 @@ void rebuildRectsByLayer(
                     t->getNet(),
                     llx,
                     lly,
-                    urx - llx,
-                    ury - lly
+                    (unsigned long)urx - llx,
+                    (unsigned long)ury - lly
                 });
             }
 

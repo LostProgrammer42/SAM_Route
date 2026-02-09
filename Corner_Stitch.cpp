@@ -368,6 +368,7 @@ bool splitVerticalEdge(CornerStitch*& anchor, long x, float y0, float y1) {
         if (++steps > MAX_STEPS) return false;
         // find tile that contains (x-1, y) — tile immediately left of the split at this y
         CornerStitch* leftTile = findTileContaining(anchor, x - 0.1, y);
+
         if (!leftTile) return false;
 
         // If the tile does not cross the split line (its right <= x), advance to its top
@@ -716,14 +717,14 @@ bool deleteTileAndCoalesce(CornerStitch* &anchor, CornerStitch* t) {
     return true;
 }
 
-bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, long wx, long wy) {
+bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, unsigned long wx, unsigned long wy) {
     if (!anchor) return false;
     auto list = tilesInRect(anchor, lx, ly, wx, wy);
     if (list.empty()) return false;
     for (auto tt : list) {
         if (!tt) continue;
         if (tt->getllx() >= lx && tt->getlly() >= ly &&
-            tt->geturx() <= lx + wx && tt->getury() <= ly + wy) {
+            tt->geturx() <= lx + (long)wx && tt->getury() <= ly + (long)wy) {
             tt->setSpace(1);
         }
     }
@@ -733,12 +734,12 @@ bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, long wx, lon
 
 // Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
 bool insertTileRect(CornerStitch* &anchor,
-                             long lx, long ly, long wx, long wy,
+                             long lx, long ly, unsigned long wx, unsigned long wy,
                              unsigned int attr = 0, unsigned int net = 0, unsigned int virt=0)
 {
     if (!anchor || wx <= 0 || wy <= 0) return false;
-    long rx = lx + wx;
-    long ry = ly + wy;
+    long rx = lx + (long)wx;
+    long ry = ly + (long)wy;
 
     //if any tile that fully lies inside is already filled -> reject
     auto intersect0 = tilesInRect(anchor, lx, ly, wx, wy);
@@ -758,7 +759,7 @@ bool insertTileRect(CornerStitch* &anchor,
     for (auto t : finalTiles) {
         if (!t) continue;
         if (!(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
-        else if(!t->isVirt() && !t->isSpace()) continue;
+        else if(!t->isVirt() && !t->isSpace() && (t->getAttr()==attr && t->getNet()==net)) continue;
         else if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
             t->setSpace(0);
             t->setAttr(attr);
@@ -792,21 +793,22 @@ bool virtualTileCommit(CornerStitch* &anchor){
     return true;
 }
 
-bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0){
+bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0, bool end = false){
     if(!t) return false;
     if(bloat_right == 0 && bloat_left == 0 && bloat_bottom == 0 && bloat_top == 0) return true;
     long urx=t->geturx(), ury=t->getury(), llx=t->getllx(), lly=t->getlly();
-    Rectangle* probeR = new Rectangle(urx, lly - bloat_bottom, bloat_right, ury + bloat_top - lly + bloat_bottom);
-    Rectangle* probeL = new Rectangle(llx - bloat_left, lly - bloat_bottom, bloat_left, ury + bloat_top - lly + bloat_bottom);
-    Rectangle* probeT = new Rectangle(llx, ury, urx - llx, bloat_top);
-    Rectangle* probeB = new Rectangle(llx, lly - bloat_bottom, urx - llx, bloat_top);
+    Rectangle* probeR = new Rectangle(urx, lly - (long)bloat_bottom, (long)bloat_right, ury + (long)bloat_top - lly + (long)bloat_bottom);
+    Rectangle* probeL = new Rectangle(llx - (long)bloat_left, lly - (long)bloat_bottom, (long)bloat_left, ury + (long)bloat_top - lly + (long)bloat_bottom);
+    Rectangle* probeT = new Rectangle(llx, ury, urx - llx, (long)bloat_top);
+    Rectangle* probeB = new Rectangle(llx, lly - (long)bloat_bottom, urx - llx, (long)bloat_top);
 
     for(auto probe : {probeR,probeL,probeT,probeB}){
-        if (!splitHorizontalEdge(t, probe->lly(), probe->llx()+0.1, probe->llx() + probe->wx()-0.2)) return false;
-        if (!splitHorizontalEdge(t, probe->lly() + probe->wy(), probe->llx()+0.1, probe->llx() + probe->wx()-0.2)) return false;
-        if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.1, probe->lly()-0.1 + probe->wy())) return false;
-        if (!splitVerticalEdge(t, probe->llx() + probe->wx(), probe->lly()+0.1, probe->lly() + probe->wy()-0.2)) return false;
-        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),probe->wx(),probe->wy()-0.2)){
+        if (!splitHorizontalEdge(t, probe->lly(), probe->llx()+0.1, probe->llx() + (long)probe->wx()-0.2)) return false;
+        if (!splitHorizontalEdge(t, probe->lly() + (long)probe->wy(), probe->llx()+0.1, probe->llx() + (long)probe->wx()-0.2)) return false;
+        if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.1, probe->lly()-0.1 + (long)probe->wy())) return false;
+        if (!splitVerticalEdge(t, probe->llx() + (long)probe->wx(), probe->lly()+0.1, probe->lly() + (long)probe->wy()-0.2)) return false;
+        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),(long)probe->wx(),(long)probe->wy())){
+            if(tile && end) {tile->setSpace(0); tile->setAttr(51);}
             if(!tile || !tile->isSpace()) continue;
             tile->setSpace(0);
             tile->setAttr(t->getAttr());
@@ -828,8 +830,8 @@ bool moveTile(
    
     long old_lx = tile->getllx();
     long old_ly = tile->getlly();
-    long wx = tile->geturx() - tile->getllx();
-    long wy = tile->getury() - tile->getlly();
+    unsigned long wx = tile->geturx() - tile->getllx();
+    unsigned long wy = tile->getury() - tile->getlly();
 
     long new_lx = old_lx + dx;
     long new_ly = old_ly + dy;
@@ -847,8 +849,7 @@ bool moveTile(
         return false;
 
     // 4. Insert at new location
-    if (!insertTileRect(root, new_lx, new_ly, wx, wy,
-                        tile->getAttr(), tile->getNet()))
+    if (!insertTileRect(root, new_lx, new_ly, wx, wy, tile->getAttr(), tile->getNet(), tile->isVirt()))
         return false;
 
     return true;
@@ -952,6 +953,7 @@ string attrToLayer(unsigned int attr) {
         case L_NTRANS:      return "ntransistor";
         case L_PTRANS:      return "ptransistor";
         case L_POLY:        return "polysilicon";
+        case L_LI:          return "li";
         case L_M1:          return "m1";
         case L_M2:          return "m2";
         case L_PTR_LEFT:    return "left";
