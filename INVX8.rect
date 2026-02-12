@@ -33,7 +33,7 @@ rect # ptransistor 13 30 15 50
 rect # polysilicon 13 50 15 52
 rect Y ndiff 8 8 13 18 left
 rect Vdd pdiff 8 30 13 50 left
-inrect GND m2 40 52 44 56
-inrect Vdd m2 24 52 28 56
-outrect Y m2 8 8 12 12
-inrect A m2 8 52 12 56
+yo GND m2 40 52 44 56
+yo Vdd m2 24 52 28 56
+yo Y m2 8 8 12 12
+yo A m2 8 52 12 56

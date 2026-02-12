@@ -112,11 +112,11 @@ class CornerStitch{
             return (getllx() <= x && x <= geturx() && getlly() <= y && y <= getury());
         }
 
-        bool intersectsRect(float lx, float ly, float wx, float wy) const {
+        bool intersectsRect(long lx, long ly, unsigned long wx, unsigned long wy) const {
             if (geturx() <= lx) return false;
-            if (lx + wx <= getllx()) return false;
+            if (lx + (long)wx <= getllx()) return false;
             if (getury() <= ly) return false;
-            if (ly + wy <= getlly()) return false;
+            if (ly + (long)wy <= getlly()) return false;
             return true;
         }
 };
@@ -149,14 +149,14 @@ CornerStitch* findTileContaining(CornerStitch *anchor, float x, float y) {
 }
 
 vector<CornerStitch*> tilesInRect(CornerStitch* anchor,
-                                  float lx, float ly,
-                                  float wx, float wy)
+                                  long lx, long ly,
+                                  unsigned long wx, unsigned long wy)
 {
     vector<CornerStitch*> result;
     if (!anchor) return result;
 
     // Step 1: find a starting tile near the rect
-    CornerStitch* start = findTileContaining(anchor, lx, ly);
+    CornerStitch* start = findTileContaining(anchor, lx+0.1, ly+0.1);
 
     // If outside layout, start from anchor anyway
     if (!start) start = anchor;
@@ -178,10 +178,10 @@ vector<CornerStitch*> tilesInRect(CornerStitch* anchor,
 
         // Explore neighbors
         CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
-        if(t->getllx() <= lx && lx < t->geturx())           nbrs[0] = nullptr;
-        if(t->getllx() <= (lx+wx) && (lx+wx) < t->geturx()) nbrs[1] = nullptr;
-        if(t->getlly() <= ly && ly < t->getury())           nbrs[2] = nullptr;
-        if(t->getlly() <= (ly+wy) && (ly+wy) < t->getury()) nbrs[3] = nullptr;
+        if(t->getllx() < lx)             nbrs[0] = nullptr;
+        if((lx+(long)wx) < t->geturx())  nbrs[1] = nullptr;
+        if(t->getlly() < ly)             nbrs[2] = nullptr;
+        if((ly+(long)wy) < t->getury())  nbrs[3] = nullptr;
 
         for (auto nb : nbrs) {
             if (!nb) continue;
@@ -641,7 +641,9 @@ int passAlignAndMergeHorizontally(CornerStitch* &anchor) {
         if (r) {
             if (alignAndMergeRight(anchor, t, r)) {
                 ++merges;
-                for(auto tile : dq) if(deleted.count(tile)) dq.erase(find(begin(dq),end(dq),tile));
+                dq.erase(remove_if(dq.begin(), dq.end(),
+                        [&](CornerStitch* x){ return deleted.count(x); }),
+                        dq.end());
                 // after merge t may have expanded; try merging t again immediately
                 dq.push_front(t);
                 continue;
@@ -650,7 +652,9 @@ int passAlignAndMergeHorizontally(CornerStitch* &anchor) {
         if(l) {
             if (alignAndMergeLeft(anchor, l, t)) {
                 ++merges;
-                for(auto tile : dq) if(deleted.count(tile)) dq.erase(find(begin(dq),end(dq),tile));
+                dq.erase(remove_if(dq.begin(), dq.end(),
+                        [&](CornerStitch* x){ return deleted.count(x); }),
+                        dq.end());
                 // after merge t may have expanded; try merging t again immediately
                 dq.push_front(l);
                 continue;
@@ -678,7 +682,9 @@ int passMergeVerticalSimple(CornerStitch* &anchor) {
     while (!dq.empty()) {
         CornerStitch* t = dq.front(); dq.pop_front();
         if (mergeVerticalOnce(t, anchor)) {
-            for(auto tile : dq) if(deleted.count(tile)) dq.erase(find(begin(dq),end(dq),tile));
+            dq.erase(remove_if(dq.begin(), dq.end(),
+                        [&](CornerStitch* x){ return deleted.count(x); }),
+                        dq.end());
             ++merges;
             dq.push_front(t);
             continue;
@@ -725,6 +731,7 @@ bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, unsigned lon
         if (!tt) continue;
         if (tt->getllx() >= lx && tt->getlly() >= ly &&
             tt->geturx() <= lx + (long)wx && tt->getury() <= ly + (long)wy) {
+            tt->setVirt(0);
             tt->setSpace(1);
         }
     }
@@ -737,7 +744,7 @@ bool insertTileRect(CornerStitch* &anchor,
                              long lx, long ly, unsigned long wx, unsigned long wy,
                              unsigned int attr = 0, unsigned int net = 0, unsigned int virt=0)
 {
-    if (!anchor || wx <= 0 || wy <= 0) return false;
+    if (!anchor) return false;
     long rx = lx + (long)wx;
     long ry = ly + (long)wy;
 
@@ -793,7 +800,7 @@ bool virtualTileCommit(CornerStitch* &anchor){
     return true;
 }
 
-bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0, bool end = false){
+bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0, bool debug = false){
     if(!t) return false;
     if(bloat_right == 0 && bloat_left == 0 && bloat_bottom == 0 && bloat_top == 0) return true;
     long urx=t->geturx(), ury=t->getury(), llx=t->getllx(), lly=t->getlly();
@@ -803,19 +810,23 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
     Rectangle* probeB = new Rectangle(llx, lly - (long)bloat_bottom, urx - llx, (long)bloat_top);
 
     for(auto probe : {probeR,probeL,probeT,probeB}){
-        if (!splitHorizontalEdge(t, probe->lly(), probe->llx()+0.1, probe->llx() + (long)probe->wx()-0.2)) return false;
-        if (!splitHorizontalEdge(t, probe->lly() + (long)probe->wy(), probe->llx()+0.1, probe->llx() + (long)probe->wx()-0.2)) return false;
-        if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.1, probe->lly()-0.1 + (long)probe->wy())) return false;
-        if (!splitVerticalEdge(t, probe->llx() + (long)probe->wx(), probe->lly()+0.1, probe->lly() + (long)probe->wy()-0.2)) return false;
-        for(auto tile : tilesInRect(t,probe->llx(),probe->lly(),(long)probe->wx(),(long)probe->wy())){
+        if (!splitHorizontalEdge(t, probe->lly(), probe->llx()+0.01, probe->llx() + (long)probe->wx()-0.02)) return false;
+        if (!splitHorizontalEdge(t, probe->lly() + (long)probe->wy(), probe->llx()+0.01, probe->llx() + (long)probe->wx()-0.02)) return false;
+        if (!splitVerticalEdge(t, probe->llx(), probe->lly()+0.01, probe->lly()-0.01 + (long)probe->wy())) return false;
+        if (!splitVerticalEdge(t, probe->llx() + (long)probe->wx(), probe->lly()+0.01, probe->lly() + (long)probe->wy()-0.02)) return false;
+    }
+    for(auto tile : tilesInRect(t,probeL->llx(),probeL->lly(),probeR->urx()-probeL->llx()+1,probeL->ury()-probeL->lly()+1)){
             if(!tile || !tile->isSpace()) continue;
             tile->setSpace(0);
+            tile->setVirt(1);
             tile->setAttr(t->getAttr());
             tile->setNet(t->getNet());
-        }
     }
+    coalesce(t,50);
     return true;
 }
+
+
 
 bool moveTile(
     CornerStitch* root,
@@ -1043,4 +1054,3 @@ void exportTiles(CornerStitch* &anchor, const string& filename) {
     //cout << "]\n";
     fout << "]\n";
 }
-

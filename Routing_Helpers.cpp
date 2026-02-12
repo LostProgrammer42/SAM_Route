@@ -93,13 +93,14 @@ unsigned long layerBloat(const string& layer) {
     return 0;
 }
 
-struct RectRec {
+struct RectRecord {
     int plane;
     string layer;
     unsigned int attr;
     unsigned int net;
     long lx, ly;
     unsigned long wx, wy;
+    bool virt;
 };
 
 enum Dir { LEFT=0, RIGHT, UP, DOWN };
@@ -202,7 +203,7 @@ vector<Port> getPorts(
     long cx = (lx + rx) / 2;
     long cy = (ly + ry) / 2;
 
-    auto freeInBloated = [&](long x, long y) {
+    auto freeInBloated = [&](float x, float y) {
         CornerStitch* b = findTileContaining(bloatedRoot, x, y);
         if (!b) return false;
         if (b->isSpace()) return true;
@@ -256,19 +257,8 @@ vector<Port> getPorts(
                 ports.push_back({x, ry, UP});
         }
     }
-        
-
-    for(auto port : ports){
-        switch(port.normal){
-            case LEFT:  if(findTileContaining(t,port.x-0.1,port.y)->isSpace()) result.push_back(port); break;
-            case RIGHT: if(findTileContaining(t,port.x+0.1,port.y)->isSpace()) result.push_back(port); break;
-            case UP:    if(findTileContaining(t,port.x,port.y+0.1)->isSpace()) result.push_back(port); break;
-            case DOWN:  if(findTileContaining(t,port.x,port.y-0.1)->isSpace()) result.push_back(port); break;
-            default: break;
-        }
-    }
-
-    return result;
+    for(auto port : ports) if(port.normal<0 || port.normal > 3) cout << LEFT;
+    return ports;
 }
 
 bool inferPreferHorizontal(const vector<vector<Point>>& pathPieces, bool defaultDir)
@@ -388,7 +378,7 @@ Point findClosestPoint(CornerStitch* t, Point dest){
 
 void rebuildRectsByLayer(
     CornerStitch* roots[3],
-    unordered_map<int, vector<RectRec>>& rectsByLayer
+    unordered_map<int, vector<RectRecord>>& rectsByLayer
 ) {
     rectsByLayer.clear();
     for(int i=0; i<3; i++){
@@ -415,7 +405,8 @@ void rebuildRectsByLayer(
                     llx,
                     lly,
                     (unsigned long)urx - llx,
-                    (unsigned long)ury - lly
+                    (unsigned long)ury - lly,
+                    t->isVirt()
                 });
             }
 
@@ -435,7 +426,7 @@ void rebuildLayerByNet(
     int Layer, 
     CornerStitch* roots[3],
     unordered_map<unsigned int, vector<CornerStitch*>>& layerByNet,
-    unordered_map<int, vector<RectRec>>& rectsByLayer)
+    unordered_map<int, vector<RectRecord>>& rectsByLayer)
 {
     for (auto& [attr, rects] : rectsByLayer) {
         if (attr != Layer) continue;
