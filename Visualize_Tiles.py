@@ -4,9 +4,9 @@ from matplotlib.patches import Rectangle
 
 # ---------- CONFIG ----------
 plane_files = [
-    # ("plane0_routed.sam", 0),
-    ("plane1_routed.sam", 1)
-    # ("plane2.sam", 2),
+    ("plane0_routed.sam", 0),
+    ("plane1_routed.sam", 1),
+    ("plane2_routed.sam", 2)
 ]
 
 Tile_boundaries = False
@@ -36,6 +36,8 @@ def layer_color(layer):
         return "pink"
     if layer == "bottom":
         return "black"
+    if layer == "li":
+        return "#ECBA6F"
     return "gray"
 
 # ---------- LOAD ALL TILES ----------

@@ -5,16 +5,19 @@ using namespace std;
 int layerToPlane(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion" ||
         layer == "ntransistor" || layer == "ptransistor")
-        return 0; // diffusion, devices
+        return 0; // diffusion, transistors
 
     if (layer == "polysilicon")
         return 0    ; // poly
     
+    if (layer == "li")
+        return 1; //local interconnect
+
     if (layer == "m1")
-        return 1;    
+        return 2;    //metal1
 
     if (layer == "m2")
-        return 2; // metal
+        return 3; // metal2
 
     return -1; 
 }
@@ -38,7 +41,7 @@ bool parseRectLine(
     string& net,
     string& layer,
     long& lx, long& ly,
-    long& wx, long& wy
+    unsigned long& wx, unsigned long& wy
 ) {
     if (line.empty() || line[0] == '#')
         return false;
@@ -74,29 +77,33 @@ unsigned int layerToAttr(const string& layer) {
     if (layer == "ntransistor")  return L_NTRANS;
     if (layer == "ptransistor")  return L_PTRANS;
     if (layer == "polysilicon")  return L_POLY;
+    if (layer == "li")           return L_LI;
     if (layer == "m1")           return L_M1;    
     if (layer == "m2")           return L_M2;
     return L_NONE;
 }
 
-long layerBloat(const string& layer) {
+unsigned long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
-    if (layer == "polysilicon") return 3;
-    if (layer == "m1") return 2;
+    if (layer == "polysilicon") return 4;
+    if (layer == "li") return 5;
+    if (layer == "m1") return 3;
     if (layer == "m2") return 0;
     return 0;
 }
 
-struct RectRec {
+struct RectRecord {
     int plane;
     string layer;
     unsigned int attr;
     unsigned int net;
-    long lx, ly, wx, wy;
+    long lx, ly;
+    unsigned long wx, wy;
+    bool virt;
 };
 
-enum Dir { LEFT, RIGHT, UP, DOWN };
+enum Dir { LEFT=0, RIGHT, UP, DOWN };
 struct Point {
     long x, y;
     bool operator==(const Point& other) const {
@@ -196,7 +203,7 @@ vector<Port> getPorts(
     long cx = (lx + rx) / 2;
     long cy = (ly + ry) / 2;
 
-    auto freeInBloated = [&](long x, long y) {
+    auto freeInBloated = [&](float x, float y) {
         CornerStitch* b = findTileContaining(bloatedRoot, x, y);
         if (!b) return false;
         if (b->isSpace()) return true;
@@ -232,10 +239,10 @@ vector<Port> getPorts(
         for (int i = 1; i <= NSy; i++) {
             long y = ly + (i * h) / (NSy + 1);
 
-            if (freeInBloated(lx - 1, y))
+            if (freeInBloated(lx - 0.1, y))
                 ports.push_back({lx, y, LEFT});
 
-            if (freeInBloated(rx + 1, y))
+            if (freeInBloated(rx + 0.1, y))
                 ports.push_back({rx, y, RIGHT});
         }
 
@@ -243,25 +250,14 @@ vector<Port> getPorts(
         for (int i = 1; i <= NSx; i++) {
             long x = lx + (i * w) / (NSx + 1);
 
-            if (freeInBloated(x, ly - 1))
+            if (freeInBloated(x, ly - 0.1))
                 ports.push_back({x, ly, DOWN});
 
-            if (freeInBloated(x, ry + 1))
+            if (freeInBloated(x, ry + 0.1))
                 ports.push_back({x, ry, UP});
         }
     }
-        
-
-    for(auto port : ports){
-        switch(port.normal){
-            case LEFT:  if(findTileContaining(t,port.x-0.1,port.y)->isSpace()) result.push_back(port);
-            case RIGHT: if(findTileContaining(t,port.x+0.1,port.y)->isSpace()) result.push_back(port);
-            case UP:    if(findTileContaining(t,port.x,port.y+0.1)->isSpace()) result.push_back(port);
-            case DOWN:  if(findTileContaining(t,port.x,port.y-0.1)->isSpace()) result.push_back(port);
-            default: continue;
-        }
-    }
-
+    for(auto port : ports) if(port.normal<0 || port.normal > 3) cout << LEFT;
     return ports;
 }
 
@@ -363,7 +359,7 @@ bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
 
 Point findClosestPoint(CornerStitch* t, Point dest){
     if(!t) return dest;
-    if(t->containsPoint(dest.x,dest.y)) return dest;
+    if(t->containsPointAllEdges(dest.x,dest.y)) return dest;
     if(t->getllx()<=dest.x && dest.x<t->geturx()){
         if(llabs(dest.y-t->getlly()) > llabs(dest.y-t->getury())) return {dest.x,t->getury()};
         else return {dest.x,t->getlly()};
@@ -382,7 +378,7 @@ Point findClosestPoint(CornerStitch* t, Point dest){
 
 void rebuildRectsByLayer(
     CornerStitch* roots[3],
-    unordered_map<int, vector<RectRec>>& rectsByLayer
+    unordered_map<int, vector<RectRecord>>& rectsByLayer
 ) {
     rectsByLayer.clear();
     for(int i=0; i<3; i++){
@@ -408,8 +404,9 @@ void rebuildRectsByLayer(
                     t->getNet(),
                     llx,
                     lly,
-                    urx - llx,
-                    ury - lly
+                    (unsigned long)urx - llx,
+                    (unsigned long)ury - lly,
+                    t->isVirt()
                 });
             }
 
@@ -429,7 +426,7 @@ void rebuildLayerByNet(
     int Layer, 
     CornerStitch* roots[3],
     unordered_map<unsigned int, vector<CornerStitch*>>& layerByNet,
-    unordered_map<int, vector<RectRec>>& rectsByLayer)
+    unordered_map<int, vector<RectRecord>>& rectsByLayer)
 {
     for (auto& [attr, rects] : rectsByLayer) {
         if (attr != Layer) continue;
@@ -462,20 +459,16 @@ bool placeContactSquare(
     long ly = substrateTile->getlly();
     long ry = substrateTile->getury();
 
-    const long SQ = 3;
+    const long SQ = 5;
     const long MIN_MARGIN = 1;
 
     long tileWidth  = rx - lx;
     long tileHeight = ry - ly;
 
-    if (tileWidth < SQ + 2 * MIN_MARGIN) return false;
-    if (tileHeight < SQ + 2 * MIN_MARGIN) return false;
+    
 
     long MARGIN = (tileWidth - SQ) / 2;
-    if (MARGIN < MIN_MARGIN) return false;
-
-    if ((rx - lx) < SQ + 2*MARGIN) return false;
-    if ((ry - ly) < SQ + 2*MARGIN) return false;
+    
 
     long square_lx = lx + MARGIN;
 
@@ -499,5 +492,146 @@ bool placeContactSquare(
     if (!ok) return false;
 
     coalesce(squareRoot, 10);
+    return true;
+}
+
+bool findFreeViaPositions(
+    CornerStitch* planeRoots[],
+    unsigned int net,
+    long sx, long sy,
+    long dx, long dy,
+    int MAX_SEARCH_OFFSET,
+    Point &viaSrc,
+    Point &viaDst
+) {
+    // Helper: check if rectangle at root is free for `net`
+    auto rectFreeForNet = [&](CornerStitch* root, long lx, long ly, unsigned long wx, unsigned long wy, unsigned int netId) -> bool {
+        auto tiles = tilesInRect(root, lx, ly, wx, wy);
+        // If tilesInRect returns empty, allow (conservative)
+        if (tiles.empty()) return true;
+        for (auto t : tiles) {
+            if (!t) continue;
+            if (t->isSpace()) continue;
+            if (t->getNet() == netId) continue;
+            return false;
+        }
+        return true;
+    };
+
+    long midx = (sx + dx) / 2;
+
+    // Search order: 0, +1, -1, +2, -2, ...
+    for (int ofs = 0; ofs <= MAX_SEARCH_OFFSET; ++ofs) {
+        for (int sgn = 0; sgn < 2; ++sgn) {
+            long candX = midx + (ofs == 0 ? 0 : (sgn == 0 ? ofs : -ofs));
+
+            // Candidate rectangles:
+            // POLY: 5x7, centered X -> lx = candX - 2, ly = y - 3
+            long poly_w = 5, poly_h = 7;
+            long poly1_lx = candX - 2, poly1_ly = sy - 3;
+            long poly2_lx = candX - 2, poly2_ly = dy - 3;
+
+            // LI: 3x7, centered X -> lx = candX - 1, ly = y - 3
+            long li_w = 3, li_h = 7;
+            long li1_lx = candX - 1, li1_ly = sy - 3;
+            long li2_lx = candX - 1, li2_ly = dy - 3;
+
+            // Quick checks
+            bool ok_poly_src = rectFreeForNet(planeRoots[layerToPlane("polysilicon")], poly1_lx, poly1_ly, poly_w, poly_h, net);
+            if (!ok_poly_src) continue;
+            bool ok_poly_dst = rectFreeForNet(planeRoots[layerToPlane("polysilicon")], poly2_lx, poly2_ly, poly_w, poly_h, net);
+            if (!ok_poly_dst) continue;
+
+            bool ok_li_src = rectFreeForNet(planeRoots[layerToPlane("li")], li1_lx, li1_ly, li_w, li_h, net);
+            if (!ok_li_src) continue;
+            bool ok_li_dst = rectFreeForNet(planeRoots[layerToPlane("li")], li2_lx, li2_ly, li_w, li_h, net);
+            if (!ok_li_dst) continue;
+
+            // Accept candidate
+            viaSrc = { candX, sy };
+            viaDst = { candX, dy };
+            return true;
+        }
+    }
+
+    // nothing found
+    return false;
+}
+
+bool attemptSwitchRouting(
+    const RoutePair &rpair,
+    int iter,
+    CornerStitch* planeRoots[],
+    CornerStitch* bloatedRoots[],
+    unordered_map<int, vector<RectRecord>>& rectsByLayer
+) {
+    // Only switch from POLY plane (plane 0). Caller should call this only when routePlane==0.
+    const int SWITCH_THRESHOLD = 40;      // tuneable
+    const int MAX_SEARCH_OFFSET = 30;     // tuneable
+
+    long sx = rpair.src_x, sy = rpair.src_y;
+    long dx = rpair.dst_x, dy = rpair.dst_y;
+
+    long manhattanDist = llabs(sx - dx) + llabs(sy - dy);
+    if (manhattanDist <= SWITCH_THRESHOLD) return false;
+
+    // Prevent recursion: if we are already routing on LI (shouldn't be called then), bail out
+    // (caller should ensure routePlane==0)
+    // Try to find free via positions
+    Point viaSrc, viaDst;
+    bool found = findFreeViaPositions(planeRoots, rpair.net, sx, sy, dx, dy, MAX_SEARCH_OFFSET, viaSrc, viaDst);
+    if (!found) {
+        cout << "Switch: no free via found near midpoint — fallback to normal routing\n";
+        return false;
+    }
+
+    // Insert blocks (virt=1)
+    bool ok1 = insertTileRect(planeRoots[layerToPlane("polysilicon")],
+                               viaSrc.x - 2, viaSrc.y - 3, 5, 7, L_POLY, rpair.net, 1);
+    bool ok2 = insertTileRect(planeRoots[layerToPlane("polysilicon")],
+                               viaDst.x - 2, viaDst.y - 3, 5, 7, L_POLY, rpair.net, 1);
+
+    bool ok3 = insertTileRect(planeRoots[layerToPlane("li")],
+                               viaSrc.x - 1, viaSrc.y - 3, 3, 7, L_LI, rpair.net, 1);
+    bool ok4 = insertTileRect(planeRoots[layerToPlane("li")],
+                               viaDst.x - 1, viaDst.y - 3, 3, 7, L_LI, rpair.net, 1);
+
+    if (!ok1 || !ok2 || !ok3 || !ok4) {
+        cout << "Switch: failed to insert contact blocks at candidate. Aborting switch.\n";
+        // Make sure rects mapping is consistent for rest of the router
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        return false;
+    }
+
+    // Make new geometry visible to the router
+    rebuildRectsByLayer(planeRoots, rectsByLayer);
+
+    // Route src -> viaSrc on POLY (plane 0)
+    RoutePair toVia1 = { sx, sy, viaSrc.x, viaSrc.y, rpair.net };
+    bool p1 = attemptRoutePair(toVia1, 0, planeRoots, bloatedRoots, rectsByLayer, iter);
+
+    // Route viaDst -> dst on POLY (plane 0)
+    RoutePair toVia2 = { viaDst.x, viaDst.y, dx, dy, rpair.net };
+    bool p2 = attemptRoutePair(toVia2, 0, planeRoots, bloatedRoots, rectsByLayer, iter);
+
+    if (!p1 || !p2) {
+        cout << "Switch: poly legs failed (p1=" << p1 << ", p2=" << p2 << "). Aborting switch.\n";
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        return false;
+    }
+
+    // Now route LI between viaSrc and viaDst (plane 1)
+    RoutePair liMid = { viaSrc.x, viaSrc.y, viaDst.x, viaDst.y, rpair.net };
+    bool li_ok = attemptRoutePair(liMid, 1, planeRoots, bloatedRoots, rectsByLayer, iter);
+
+    if (!li_ok) {
+        cout << "Switch: LI middle route failed\n";
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        return false;
+    }
+
+    // Success: the poly->li->poly switch routed fully
+    cout << "Switch routing succeeded for net " << rpair.net << " at X=" << viaSrc.x << "\n";
+    rebuildRectsByLayer(planeRoots, rectsByLayer);
     return true;
 }

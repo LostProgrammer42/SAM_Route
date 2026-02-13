@@ -1,0 +1,7 @@
+rect Y m1 40 6 45 16 center
+rect Y m1 40 23 45 38 center
+rect Y m1 50 15 55 25 center
+rect R li 10 10 15 15 center
+rect R li 80 80 85 85 center
+yorect A polysilicon 20 16 22 18
+yorect A polysilicon 20 21 22 23
