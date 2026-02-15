@@ -69,6 +69,9 @@ class CornerStitch{
 
         //6 bits of Net Type
         unsigned int net:6;
+
+         bool is_bloat_ = false;
+         int  bloat_owner_net = -1; // -1 = no bloat owner
     public:
         //Constructors
         CornerStitch():
@@ -119,6 +122,11 @@ class CornerStitch{
             if (ly + (long)wy <= getlly()) return false;
             return true;
         }
+
+        bool isBloat() const { return is_bloat_; }
+        int  bloatOwner() const { return bloat_owner_net; }
+        // mark/unmark bloat; owner=-1 removes owner.
+        void setBloat(bool v, int owner = -1) { is_bloat_ = v; bloat_owner_net = (v ? owner : -1); }
 };
 
 
@@ -820,7 +828,8 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
             tile->setSpace(0);
             tile->setVirt(1);
             tile->setAttr(t->getAttr());
-            tile->setNet(t->getNet());
+            // tile->setNet(t->getNet());
+            tile->setBloat(true, (int)t->getNet());
     }
     coalesce(t,50);
     return true;

@@ -125,6 +125,7 @@ vector<RoutePair> generateRoutePairs(
             continue;
         }
 
+        
         // ---------- ITERATION >= 3 : CENTER-BASED CONNECT ----------
         vector<CornerStitch*> connected;
         vector<CornerStitch*> unconnected = layers;
@@ -137,12 +138,20 @@ vector<RoutePair> generateRoutePairs(
 
         connected.push_back(anchor);
         unconnected.erase(remove(unconnected.begin(), unconnected.end(), anchor), unconnected.end());
+        struct CandidatePair {
+            CornerStitch* s;
+            CornerStitch* d;
+            float cost;
+            CandidatePair(CornerStitch* s_, CornerStitch* d_, float c_): s(s_), d(d_), cost(c_) {}
+        };
+
+        vector<CandidatePair> Candidates;
 
         while (!unconnected.empty()) {
+            Candidates.clear(); 
             CornerStitch* bestSrc = nullptr;
-            CornerStitch* bestDst = nullptr;
+            CornerStitch* bestDst = nullptr;          
             long bestCost = LONG_MAX;
-
             for (auto* s : connected) {
                 for (auto* d : unconnected) {
                     if(!s || !d) continue;
@@ -152,17 +161,28 @@ vector<RoutePair> generateRoutePairs(
                     float cy2 = (d->getlly() + d->getury())*0.5;
 
                     float cost = llabs(cx1 - cx2) + llabs(cy1 - cy2);
-
                     if (cost < bestCost) {
                         bestCost = cost;
                         bestSrc = s;
                         bestDst = d;
                     }
+                    if(iter > 6){
+                        Candidates.push_back({s, d, cost});
+                    }
                 }
             }
-
-            if (!bestSrc || !bestDst) break;
-
+            if(iter > 6){
+                if (Candidates.empty()) break;
+                sort(Candidates.begin(), Candidates.end(), [](const CandidatePair& a, const CandidatePair& b) {
+                    return a.cost < b.cost;
+                });
+                int idx = 0;
+                idx = min((int)Candidates.size() - 1, iter - 6); 
+                cout << "It's been too long now, ig I should try a new route pair, trying idx: " << idx << "\n";
+                bestSrc = Candidates[idx].s;
+                bestDst = Candidates[idx].d;
+            }
+                if (!bestSrc || !bestDst) break;
             routePairs.push_back({bestSrc->getllx(), bestSrc->getlly(), bestDst->getllx(), bestDst->getlly(), net});
             connected.push_back(bestDst);
             unconnected.erase(remove(unconnected.begin(), unconnected.end(), bestDst), unconnected.end());
@@ -178,6 +198,7 @@ vector<RoutePair> generateRoutePairs(
     return routePairs;
 }
 int x=0;
+
 // attemptRoutePair: route a single RoutePair on the specified plane only
 bool attemptRoutePair(
     const RoutePair &rpair,
@@ -185,7 +206,7 @@ bool attemptRoutePair(
     CornerStitch* planeRoots[3],
     CornerStitch* bloatedRoots[3],
     unordered_map<int, vector<RectRecord>> &rectsByLayer,
-    int iter
+    int iter, bool try_switch = true
 ) {
     // Find src/dst tiles strictly on the routePlane
     CornerStitch* src = findTileContaining(planeRoots[routePlane], rpair.src_x, rpair.src_y);
@@ -196,10 +217,6 @@ bool attemptRoutePair(
         cout << "Not routing Electrically Adjacent Tiles\n";
         return false;
     }
-
-    const int SWITCH_THRESHOLD = 40; // tune this threshold as needed
-    
-
     // Reset bloated roots and re-insert all rects
     for (int p = 0; p < 3; ++p) {
         deleteRectAndCoalesce(bloatedRoots[p], -20, -20, 200, 200);
@@ -335,18 +352,78 @@ bool attemptRoutePair(
                 CornerStitch* next = nullptr;
                 Point exit;
                 long bestCost = LONG_MAX;
+                // for (auto nbrs : {rightTiles, topTiles, leftTiles, bottomTiles}) {
+                //     for (auto nbr : nbrs) {
+                //         if(!(nbr->isSpace() || 
+                //         (nbr->getAttr() == src->getAttr() && nbr->getNet()  == src->getNet()))) continue;
+                //         //if(nbr == start || nbr == end) continue;
+                //         if(nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
+                //         if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 
+                //         && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
+
+                //         Point candidate = findClosestPoint(nbr, targetPoint);
+                //         long cost = llabs(candidate.x - targetPoint.x) +
+                //                     llabs(candidate.y - targetPoint.y);
+
+                //         if (cost < bestCost) {
+                //             bestCost = cost;
+                //             next = nbr;
+                //         }
+                //     }
                 for (auto nbrs : {rightTiles, topTiles, leftTiles, bottomTiles}) {
                     for (auto nbr : nbrs) {
-                        if(!(nbr->isSpace() || 
-                        (nbr->getAttr() == src->getAttr() && nbr->getNet()  == src->getNet()))) continue;
-                        //if(nbr == start || nbr == end) continue;
-                        if(nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
-                        if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 
-                        && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
+                        if (!nbr) continue;
 
+                        // 1) Respect bloat of other nets: do not step into a bloat tile owned by another net
+                        if (nbr->isBloat() && nbr->bloatOwner() != -1 && nbr->bloatOwner() != (int)rpair.net) {
+                            continue;
+                        }
+
+                        // 2) Accept neighbor only if it's empty space OR same-attr & same-net copper (real copper)
+                        if (!(nbr->isSpace() || (nbr->getAttr() == src->getAttr() && nbr->getNet() == src->getNet()))) {
+                            continue;
+                        }
+
+                        // Avoid trivial backtracking
+                        if (nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
+                        if (count(visitedTiles.begin(), visitedTiles.end(), nbr) > 0 &&
+                            count(pathTiles.begin(), pathTiles.end(), nbr) == 0) continue;
+
+                        // 3) Compute greedy distance-to-target
                         Point candidate = findClosestPoint(nbr, targetPoint);
-                        long cost = llabs(candidate.x - targetPoint.x) +
-                                    llabs(candidate.y - targetPoint.y);
+                        long cost = llabs(candidate.x - targetPoint.x) + llabs(candidate.y - targetPoint.y);
+
+                        // 4) Add large penalties to strongly discourage routing through same-net bloat/virtual tiles
+                        //    (keeps routing successful but avoids creating new copper inside bloat).
+                        const long BLOAT_PENALTY = 1;   
+                        const long VIRT_PENALTY  = 1; 
+                        if (nbr->isBloat() && nbr->bloatOwner() == (int)rpair.net) {
+                            cost *= BLOAT_PENALTY;
+                        }
+
+                        // discourage stepping through same-net virtual tiles (if they are marked virt)
+                        if (!nbr->isSpace() && nbr->getNet() == src->getNet() && nbr->isVirt()) {
+                            cost *= VIRT_PENALTY;
+                        }
+
+                        // small relaxation: if this virtual/bloat tile touches a real same-net tile,
+                        // reduce penalty to allow narrow connections. We approximate by checking immediate neighbors.
+                        if ((nbr->isVirt() || nbr->isBloat()) && nbr->getNet() == src->getNet()) {
+                            // check 4-cardinal neighbors quickly
+                            bool touchesRealSameNet = false;
+                            CornerStitch* nleft  = nbr->left();
+                            CornerStitch* nright = nbr->right();
+                            CornerStitch* ntop   = nbr->top();
+                            CornerStitch* nbottom= nbr->bottom();
+                            if (nleft && !nleft->isSpace() && nleft->getNet() == src->getNet() && !nleft->isVirt()) touchesRealSameNet = true;
+                            if (nright && !nright->isSpace() && nright->getNet() == src->getNet() && !nright->isVirt()) touchesRealSameNet = true;
+                            if (ntop && !ntop->isSpace() && ntop->getNet() == src->getNet() && !ntop->isVirt()) touchesRealSameNet = true;
+                            if (nbottom && !nbottom->isSpace() && nbottom->getNet() == src->getNet() && !nbottom->isVirt()) touchesRealSameNet = true;
+                            if (touchesRealSameNet) {
+                                // Remove most of the penalty so narrow attachments are allowed
+                                cost = cost/BLOAT_PENALTY;
+                            }
+                        }
 
                         if (cost < bestCost) {
                             bestCost = cost;
@@ -446,6 +523,28 @@ bool attemptRoutePair(
         }
         
         if (routed) {
+            unsigned long totalCost = 0;
+            for (auto &c : routeCostsG) totalCost += c;
+
+            // ideal Manhattan distance between the source/destination tile centers (use rpair coords)
+            long ideal = llabs(rpair.src_x - rpair.dst_x) + llabs(rpair.src_y - rpair.dst_y);
+
+            // tuning params: require BOTH an additive and multiplicative exceed to trigger switch
+            const unsigned long OVERHEAD_ADD = 12;   // absolute extra allowed
+            const double OVERHEAD_FACTOR = 1.2;      // multiplicative factor
+
+            bool excessive = false;
+            if (ideal > 0) {
+                excessive = (totalCost > ideal + OVERHEAD_ADD) && ((double)totalCost > OVERHEAD_FACTOR * (double)ideal);
+            } else {
+                excessive = false;
+            }
+            if (excessive && try_switch && routePlane == 0) {
+                cout << "Route found but cost " << totalCost << " >> ideal " << ideal
+                    << " ; shoudld do switch routing for net " << rpair.net << "\n";
+
+            }
+            
             Point current = {bestSrc.x, bestSrc.y};
             cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
             for (size_t i = 0; i < pathPiecesG.size(); i++) {

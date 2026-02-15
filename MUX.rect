@@ -47,9 +47,9 @@ rect # ptransistor 65 23 67 38
 rect # polysilicon 65 38 67 40
 rect Y ndiff 60 6 65 16 left
 rect #5 pdiff 60 23 65 38 left
-inrect GND m1 72 40 76 44
-inrect Vdd m1 56 40 60 44
-inrect S m1 40 40 44 44
-inrect B m1 24 40 28 44
-outrect Y m1 8 4 12 8
-inrect A m1 8 40 12 44
+yo inrect GND m1 72 40 76 44
+yo inrect Vdd m1 56 40 60 44
+yo inrect S m1 40 40 44 44
+yo inrect B m1 24 40 28 44
+yo outrect Y m1 8 4 12 8
+yo inrect A m1 8 40 12 44

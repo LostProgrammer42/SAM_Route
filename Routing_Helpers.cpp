@@ -203,11 +203,25 @@ vector<Port> getPorts(
     long cx = (lx + rx) / 2;
     long cy = (ly + ry) / 2;
 
-    auto freeInBloated = [&](float x, float y) {
+    auto freeInBloated = [&](float x, float y) -> bool {
         CornerStitch* b = findTileContaining(bloatedRoot, x, y);
         if (!b) return false;
+
+        // 1. empty space → always ok
         if (b->isSpace()) return true;
-        return (b->getNet() == t->getNet());  // allow same-net adjacency
+
+        // 2. real same-net copper → ok
+        if (b->getNet() == t->getNet())
+            return true;
+
+        // 3. SAME-NET BLOAT → allow
+        if (b->isBloat() && b->bloatOwner() == t->getNet())
+            return true;
+
+        // 4. other-net bloat → block
+        if (b->isBloat() && b->bloatOwner() != t->getNet())
+            return false;
+        return false;
     };
 
 
@@ -495,143 +509,3 @@ bool placeContactSquare(
     return true;
 }
 
-bool findFreeViaPositions(
-    CornerStitch* planeRoots[],
-    unsigned int net,
-    long sx, long sy,
-    long dx, long dy,
-    int MAX_SEARCH_OFFSET,
-    Point &viaSrc,
-    Point &viaDst
-) {
-    // Helper: check if rectangle at root is free for `net`
-    auto rectFreeForNet = [&](CornerStitch* root, long lx, long ly, unsigned long wx, unsigned long wy, unsigned int netId) -> bool {
-        auto tiles = tilesInRect(root, lx, ly, wx, wy);
-        // If tilesInRect returns empty, allow (conservative)
-        if (tiles.empty()) return true;
-        for (auto t : tiles) {
-            if (!t) continue;
-            if (t->isSpace()) continue;
-            if (t->getNet() == netId) continue;
-            return false;
-        }
-        return true;
-    };
-
-    long midx = (sx + dx) / 2;
-
-    // Search order: 0, +1, -1, +2, -2, ...
-    for (int ofs = 0; ofs <= MAX_SEARCH_OFFSET; ++ofs) {
-        for (int sgn = 0; sgn < 2; ++sgn) {
-            long candX = midx + (ofs == 0 ? 0 : (sgn == 0 ? ofs : -ofs));
-
-            // Candidate rectangles:
-            // POLY: 5x7, centered X -> lx = candX - 2, ly = y - 3
-            long poly_w = 5, poly_h = 7;
-            long poly1_lx = candX - 2, poly1_ly = sy - 3;
-            long poly2_lx = candX - 2, poly2_ly = dy - 3;
-
-            // LI: 3x7, centered X -> lx = candX - 1, ly = y - 3
-            long li_w = 3, li_h = 7;
-            long li1_lx = candX - 1, li1_ly = sy - 3;
-            long li2_lx = candX - 1, li2_ly = dy - 3;
-
-            // Quick checks
-            bool ok_poly_src = rectFreeForNet(planeRoots[layerToPlane("polysilicon")], poly1_lx, poly1_ly, poly_w, poly_h, net);
-            if (!ok_poly_src) continue;
-            bool ok_poly_dst = rectFreeForNet(planeRoots[layerToPlane("polysilicon")], poly2_lx, poly2_ly, poly_w, poly_h, net);
-            if (!ok_poly_dst) continue;
-
-            bool ok_li_src = rectFreeForNet(planeRoots[layerToPlane("li")], li1_lx, li1_ly, li_w, li_h, net);
-            if (!ok_li_src) continue;
-            bool ok_li_dst = rectFreeForNet(planeRoots[layerToPlane("li")], li2_lx, li2_ly, li_w, li_h, net);
-            if (!ok_li_dst) continue;
-
-            // Accept candidate
-            viaSrc = { candX, sy };
-            viaDst = { candX, dy };
-            return true;
-        }
-    }
-
-    // nothing found
-    return false;
-}
-
-bool attemptSwitchRouting(
-    const RoutePair &rpair,
-    int iter,
-    CornerStitch* planeRoots[],
-    CornerStitch* bloatedRoots[],
-    unordered_map<int, vector<RectRecord>>& rectsByLayer
-) {
-    // Only switch from POLY plane (plane 0). Caller should call this only when routePlane==0.
-    const int SWITCH_THRESHOLD = 40;      // tuneable
-    const int MAX_SEARCH_OFFSET = 30;     // tuneable
-
-    long sx = rpair.src_x, sy = rpair.src_y;
-    long dx = rpair.dst_x, dy = rpair.dst_y;
-
-    long manhattanDist = llabs(sx - dx) + llabs(sy - dy);
-    if (manhattanDist <= SWITCH_THRESHOLD) return false;
-
-    // Prevent recursion: if we are already routing on LI (shouldn't be called then), bail out
-    // (caller should ensure routePlane==0)
-    // Try to find free via positions
-    Point viaSrc, viaDst;
-    bool found = findFreeViaPositions(planeRoots, rpair.net, sx, sy, dx, dy, MAX_SEARCH_OFFSET, viaSrc, viaDst);
-    if (!found) {
-        cout << "Switch: no free via found near midpoint — fallback to normal routing\n";
-        return false;
-    }
-
-    // Insert blocks (virt=1)
-    bool ok1 = insertTileRect(planeRoots[layerToPlane("polysilicon")],
-                               viaSrc.x - 2, viaSrc.y - 3, 5, 7, L_POLY, rpair.net, 1);
-    bool ok2 = insertTileRect(planeRoots[layerToPlane("polysilicon")],
-                               viaDst.x - 2, viaDst.y - 3, 5, 7, L_POLY, rpair.net, 1);
-
-    bool ok3 = insertTileRect(planeRoots[layerToPlane("li")],
-                               viaSrc.x - 1, viaSrc.y - 3, 3, 7, L_LI, rpair.net, 1);
-    bool ok4 = insertTileRect(planeRoots[layerToPlane("li")],
-                               viaDst.x - 1, viaDst.y - 3, 3, 7, L_LI, rpair.net, 1);
-
-    if (!ok1 || !ok2 || !ok3 || !ok4) {
-        cout << "Switch: failed to insert contact blocks at candidate. Aborting switch.\n";
-        // Make sure rects mapping is consistent for rest of the router
-        rebuildRectsByLayer(planeRoots, rectsByLayer);
-        return false;
-    }
-
-    // Make new geometry visible to the router
-    rebuildRectsByLayer(planeRoots, rectsByLayer);
-
-    // Route src -> viaSrc on POLY (plane 0)
-    RoutePair toVia1 = { sx, sy, viaSrc.x, viaSrc.y, rpair.net };
-    bool p1 = attemptRoutePair(toVia1, 0, planeRoots, bloatedRoots, rectsByLayer, iter);
-
-    // Route viaDst -> dst on POLY (plane 0)
-    RoutePair toVia2 = { viaDst.x, viaDst.y, dx, dy, rpair.net };
-    bool p2 = attemptRoutePair(toVia2, 0, planeRoots, bloatedRoots, rectsByLayer, iter);
-
-    if (!p1 || !p2) {
-        cout << "Switch: poly legs failed (p1=" << p1 << ", p2=" << p2 << "). Aborting switch.\n";
-        rebuildRectsByLayer(planeRoots, rectsByLayer);
-        return false;
-    }
-
-    // Now route LI between viaSrc and viaDst (plane 1)
-    RoutePair liMid = { viaSrc.x, viaSrc.y, viaDst.x, viaDst.y, rpair.net };
-    bool li_ok = attemptRoutePair(liMid, 1, planeRoots, bloatedRoots, rectsByLayer, iter);
-
-    if (!li_ok) {
-        cout << "Switch: LI middle route failed\n";
-        rebuildRectsByLayer(planeRoots, rectsByLayer);
-        return false;
-    }
-
-    // Success: the poly->li->poly switch routed fully
-    cout << "Switch routing succeeded for net " << rpair.net << " at X=" << viaSrc.x << "\n";
-    rebuildRectsByLayer(planeRoots, rectsByLayer);
-    return true;
-}
