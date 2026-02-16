@@ -494,3 +494,113 @@ bool placeContactSquare(
     coalesce(squareRoot, 10);
     return true;
 }
+
+class NodePoint {
+public:
+    CornerStitch* tile;
+    Point point;
+    NodePoint* parent;
+
+    // ---------- Constructor ----------
+    NodePoint(CornerStitch* t, Point p, NodePoint* par = nullptr)
+        : tile(t), point(p), parent(par) {}
+
+    // ============================================================
+    // Check if a tile exists in parent chain
+    // ============================================================
+    bool containsTileInPath(CornerStitch* t) const {
+        const NodePoint* cur = this;
+        while (cur) {
+            if (cur->tile == t) return true;
+            cur = cur->parent;
+        }
+        return false;
+    }
+
+    // ============================================================
+    // Cost from parent → current point
+    // (Manhattan distance)
+    // ============================================================
+    unsigned long stepCost() const {
+        if (!parent) return 0;
+        return llabs(point.x - parent->point.x) +
+               llabs(point.y - parent->point.y);
+    }
+
+    // ============================================================
+    // Total cost from root → current
+    // ============================================================
+    unsigned long totalCost() const {
+        unsigned long cost = 0;
+        const NodePoint* cur = this;
+        while (cur && cur->parent) {
+            cost += llabs(cur->point.x - cur->parent->point.x) +
+                    llabs(cur->point.y - cur->parent->point.y);
+            cur = cur->parent;
+        }
+        return cost;
+    }
+
+    // ============================================================
+    // Get all tiles in path
+    // ============================================================
+    vector<CornerStitch*> pathTiles() const {
+        vector<CornerStitch*> tiles;
+        const NodePoint* cur = this;
+        while (cur) {
+            tiles.push_back(cur->tile);
+            cur = cur->parent;
+        }
+        reverse(tiles.begin(), tiles.end());
+        return tiles;
+    }
+
+    // ============================================================
+    // Build all pathPieces using findPathInTile()
+    //    Returns vector<vector<Point>>
+    // ============================================================
+    vector<vector<Point>> pathPieces() const {
+        vector<vector<Point>> pieces;
+        const NodePoint* cur = this;
+
+        while (cur && cur->parent) {
+            bool dir = inferPreferHorizontal(pieces, true);
+            pieces.push_back(pathInTile(cur->parent->tile, cur->parent->point, cur->point,!dir));
+            cur = cur->parent;
+        }
+
+        reverse(pieces.begin(), pieces.end());
+        return pieces;
+    }
+
+    // ------------------------------------------------------------
+    // Delete entire parent chain starting from THIS node
+    // ------------------------------------------------------------
+    void deleteChain() {
+        NodePoint* cur = this;
+        while (cur) {
+            NodePoint* p = cur->parent;
+            delete cur;
+            cur = p;
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Reset using an existing node as new root
+    // Usage: curNode = curNode->reset(newNode);
+    // ------------------------------------------------------------
+    NodePoint* reset(NodePoint* newRoot) {
+        deleteChain();
+        return newRoot;
+    }
+
+    // ------------------------------------------------------------
+    // Reset by creating a new root directly
+    // Usage: curNode = curNode->reset(tile, point);
+    // ------------------------------------------------------------
+    NodePoint* reset(CornerStitch* newTile, Point newPoint) {
+        deleteChain();
+        return new NodePoint(newTile, newPoint, nullptr);
+    }
+};
+

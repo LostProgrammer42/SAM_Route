@@ -215,7 +215,7 @@ bool attemptRoutePair(
     CornerStitch* dst = findTileContaining(planeRoots[routePlane], rpair.dst_x, rpair.dst_y);
     if (!src || !dst) return false;
     if (electricallyAdjacent(src, dst)) {
-        cout << "Not routing Electrically Adjacent Tiles\n";
+        //cout << "Not routing Electrically Adjacent Tiles\n";
         return false;
     }
 
@@ -264,7 +264,7 @@ bool attemptRoutePair(
     for (int i = 0; i < 3; ++i) coalesce(bloatedRoots[i],20);
     exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
     // if(routePlane==1) x++;
-    // if(x==7 && routePlane==1){
+    // if(x==8 && routePlane==1){
     //     for (const auto &r : rectsByLayer[L_M1]) {
     //         CornerStitch* t = findTileContaining(bloatedRoots[r.plane], r.lx + (long)r.wx*0.5, r.ly + (long)r.wy*0.5);
     //         if (!t) continue;
@@ -272,7 +272,7 @@ bool attemptRoutePair(
     //         else t->setAttr(L_PTR_LEFT);
     //         exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
     //     }
-    //     //assert(false);
+    //     assert(false);
     // }
 
     // Ports: use bloated plane corresponding to routePlane
@@ -294,7 +294,7 @@ bool attemptRoutePair(
     vector<pair<Port, Port>> failedRoutes;
     bool routed = false;
     vector<vector<Point>> pathPiecesG;
-    vector<unsigned long> routeCostsG;
+    unsigned long routeCost;
 
     while (true) {
         Port bestSrc, bestDst;
@@ -338,51 +338,48 @@ bool attemptRoutePair(
 
         // ---------- BIDIRECTIONAL ROUTING ATTEMPT ----------
         pathPiecesG.clear();
-        routeCostsG.clear();
 
         // SRC front
         Point curPointS = {bestSrc.x, bestSrc.y};
+        NodePoint* curNodeS = new NodePoint(curS,curPointS);
         vector<vector<Point>> pathPiecesS;
-        vector<CornerStitch*> pathTilesS;
         vector<CornerStitch*> visitedTilesS;
-        vector<unsigned long> routeCostsS;
-        pathTilesS.push_back(curS);
         visitedTilesS.push_back(start);
 
         // DST front
         Point curPointD = {bestDst.x, bestDst.y};
+        NodePoint* curNodeD = new NodePoint(curD,curPointD);
         vector<vector<Point>> pathPiecesD;
-        vector<CornerStitch*> pathTilesD;
         vector<CornerStitch*> visitedTilesD;
-        vector<unsigned long> routeCostsD;
-        pathTilesD.push_back(curD);
         visitedTilesD.push_back(end);
 
         int route_ittr = 0;
         bool meet = false;
 
-        auto advanceOneStep = [&](CornerStitch*& cur, Point& curPoint, const Point& targetPoint,
-            vector<unsigned long>& routeCosts, vector<vector<Point>>& pathPieces, vector<CornerStitch*>& pathTiles,
+        auto advanceOneStep = [&](NodePoint*& curNode, const NodePoint* targetNode,
             vector<CornerStitch*>& visitedTiles, bool isSrc) -> bool{
 
             long MAX_TRIES = 1000;
             long i = 0;
 
-            while(cur && i++<1000){
+            while(curNode && i++<1000){
+                CornerStitch* cur = curNode->tile;
+                Point curPoint = curNode->point;
                 vector<CornerStitch*> rightTiles  = rightNeighbors(cur);
                 vector<CornerStitch*> topTiles    = topNeighbors(cur);
                 vector<CornerStitch*> leftTiles   = leftNeighbors(cur);
                 vector<CornerStitch*> bottomTiles = bottomNeighbors(cur);
                 CornerStitch* next = nullptr;
-                CornerStitch* prev = pathTiles.back();
+                CornerStitch* prev = curNode->parent ? curNode->parent->tile : nullptr;
                 Point exit;
+                Point targetPoint = targetNode->point;
                 long bestCost = LONG_MAX;
                 for (auto nbrs : {rightTiles, topTiles, leftTiles, bottomTiles}) {
                     for (auto nbr : nbrs) {
-                        if(nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
-                        if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
+                        if(nbr == prev && nbr == visitedTiles.back()) continue;
+                        if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 && !curNode->containsTileInPath(nbr) ) continue;
                         if(cur->isBloat()){
-                            if(pathTiles.size()==2 || (prev && prev->isBloat())){
+                            if(!curNode->parent || (prev && prev->isBloat())){
                                 if(nbr->isBloat()) continue;
                                 else if(!(nbr->isSpace() || (nbr->getAttr()==src->getAttr() && nbr->getNet()==src->getNet()))) continue;
                             }
@@ -403,71 +400,55 @@ bool attemptRoutePair(
                 }
 
                 if(!next || bestCost==LONG_MAX){
-                    if(pathPieces.empty()) return false;
-                    curPoint = pathPieces.back().front();
-                    pathPieces.pop_back();
-                    routeCosts.pop_back();
-                    next = pathTiles.back();
-                    pathTiles.pop_back();
-                    visitedTiles.pop_back();
+                    if(!curNode->parent) return false;
                     visitedTiles.push_back(cur);
-                    cur = next;
+                    NodePoint* nextNode = curNode->parent;
+                    delete curNode;
+                    curNode = nextNode;
                     continue;
                 }
-                if(count(pathTiles.begin(),pathTiles.end(),next) > 0){
-                    while(cur != next){
-                        cur = pathTiles.back();
-                        curPoint = pathPieces.back().front();
-                        pathTiles.pop_back();
-                        pathPieces.pop_back();
-                        routeCosts.pop_back();
+                if(curNode->containsTileInPath(next)){
+                    while(curNode->tile != next){
+                        NodePoint* nextNode = curNode->parent;
+                        delete curNode;
+                        curNode = nextNode;
                     }
                     continue;
                 }
                 if(next->getNet() == start->getNet() && !next->isBloat()){
                     CornerStitch* origin = isSrc ? start : end;
-                    // CornerStitch* check = findTileContaining(planeRoots[layerToPlane(attrToLayer(next->getAttr()))],next->getllx()+0.1)
                     if(electricallyAdjacent(next,origin)){
-                        cur = next;
-                        curPoint = findClosestPoint(next,targetPoint);
-                        routeCosts.clear(); pathTiles.clear(); pathPieces.clear();
-                        pathTiles.push_back(cur);
-                        visitedTiles.push_back(cur);
+                        visitedTiles.push_back(next);
+                        exit = findClosestPoint(next,targetPoint);
+                        curNode = curNode->reset(next,exit);
+                        continue;
                     }
                 }
                 
                 exit = findClosestPoint(next, curPoint); 
-                bool dir = inferPreferHorizontal(pathPieces, true);
-                pathPieces.push_back(pathInTile(cur, curPoint, exit, dir));
-                pathTiles.push_back(cur);
                 visitedTiles.push_back(cur);
-                unsigned long pathCost = llabs(curPoint.x - exit.x) + llabs(curPoint.y - exit.y);
-                routeCosts.push_back(pathCost);
-
-                cur = next;
-                curPoint = exit;
+                NodePoint* nextNode = new NodePoint(next,exit,curNode);
+                curNode = nextNode;
                 return true;
             }
             return false;
         };
 
         // -------- alternating SRC → DST → SRC → DST --------
-        while (curS && curD && route_ittr++ < 50) {
+        while (curNodeS && curNodeD && route_ittr++ < 50) {
 
             // SRC advances toward DST
-            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true))
-                break;
-            if (curS == curD ||
-                curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
+            if (!advanceOneStep(curNodeS, curNodeD, visitedTilesS, true)) break;
+            if (curNodeS->tile == curNodeD->tile ||
+                curNodeS->tile->containsPointAllEdges(curNodeD->point.x, curNodeD->point.y)) {
                 meet = true;
                 break;
             }
 
             // DST advances toward SRC
-            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, false))
-                break;
-            if (curD == curS ||
-                curD->containsPointAllEdges(curPointS.x, curPointS.y)) {
+            if (!advanceOneStep(curNodeD, curNodeS, visitedTilesD, false)) break;
+            if (curNodeD->tile == curNodeS->tile ||
+                curNodeD->tile->containsPointAllEdges(curNodeS->point.x, curNodeS->point.y)) {
                 meet = true;
                 break;
             }
@@ -475,25 +456,21 @@ bool attemptRoutePair(
         // -------- merge paths if meeting occurred --------
 
         if (meet) {
-            bool dir = inferPreferHorizontal(pathPiecesS, true);
-            pathPiecesS.push_back(pathInTile(curS, curPointS, curPointD, dir));
-            routeCostsS.push_back(llabs(curPointS.x - curPointD.x) + llabs(curPointS.y - curPointD.y));
-
+            pathPiecesS = curNodeS->pathPieces();
+            pathPiecesD = curNodeD->pathPieces();
+            bool dir = inferPreferHorizontal(pathPiecesS, true);            
+            pathPiecesS.push_back(pathInTile(curNodeS->tile, curNodeS->point, curNodeD->point, dir));
             reverse(pathPiecesD.begin(), pathPiecesD.end());
-            reverse(routeCostsD.begin(), routeCostsD.end());
             for (auto& piece : pathPiecesD) {
                 reverse(piece.begin(), piece.end());
                 pathPiecesS.push_back(piece);
             }
-            for (auto& cost : routeCostsD) {
-                routeCostsS.push_back(cost);
-            }
-
             pathPiecesG = pathPiecesS;
-            routeCostsG = routeCostsS;
+            routeCost = curNodeS->totalCost() + curNodeD->totalCost();
             routed = true;
         }
-        
+        curNodeS->deleteChain(); curNodeD->deleteChain();
+
         if (routed) {
             Point current = {bestSrc.x, bestSrc.y};
             cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";

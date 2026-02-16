@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
         routingAttrs.push_back(L_POLY);
     }
     routingAttrs.push_back(L_M1);
-    int MAX_ITERS = 8;
+    int MAX_ITERS = 5;
 
     substrateByNet.clear();
     rebuildLayerByNet(L_NDIFF, planeRoots, substrateByNet, rectsByLayer);

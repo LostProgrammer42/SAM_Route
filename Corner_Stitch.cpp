@@ -826,7 +826,7 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
             tile->setNet(t->getNet());
     }
     coalesce(t,50);
-    delete probeR, probeL, probeB, probeT;
+    delete probeR; delete probeL; delete probeB; delete probeT;
     return true;
 }
 
