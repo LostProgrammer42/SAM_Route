@@ -4,7 +4,6 @@
 #include <bits/stdc++.h>
 #include "Modular_Route.cpp"
 using namespace std;
-int z=0;
 
 int main(int argc, char** argv) {
     if (argc < 2) {

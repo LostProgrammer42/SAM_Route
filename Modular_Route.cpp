@@ -199,6 +199,8 @@ vector<RoutePair> generateRoutePairs(
     return routePairs;
 }
 int x=0;
+int z=0;
+
 // attemptRoutePair: route a single RoutePair on the specified plane only
 bool attemptRoutePair(
     const RoutePair &rpair,
@@ -252,7 +254,7 @@ bool attemptRoutePair(
         for (const auto &r : rectsByLayer[a]) {
             CornerStitch* t = findTileContaining(bloatedRoots[plane], r.lx + (long)r.wx*0.5, r.ly + (long)r.wy*0.5);
             if (!t) continue;
-            if (t == src_in_bloated_plane || t == dst_in_bloated_plane) continue;
+            //if (t == src_in_bloated_plane || t == dst_in_bloated_plane) continue;
             bool ok1 = bloatByRect(t, b, b, b, b);
             if (!ok1) { 
                 cout << "Bloating Failed " << plane << "\n"; 
@@ -270,7 +272,7 @@ bool attemptRoutePair(
     //         else t->setAttr(L_PTR_LEFT);
     //         exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
     //     }
-    //     assert(false);
+    //     //assert(false);
     // }
 
     // Ports: use bloated plane corresponding to routePlane
@@ -422,8 +424,9 @@ bool attemptRoutePair(
                     }
                     continue;
                 }
-                if(next->getNet() == start->getNet()){
+                if(next->getNet() == start->getNet() && !next->isBloat()){
                     CornerStitch* origin = isSrc ? start : end;
+                    // CornerStitch* check = findTileContaining(planeRoots[layerToPlane(attrToLayer(next->getAttr()))],next->getllx()+0.1)
                     if(electricallyAdjacent(next,origin)){
                         cur = next;
                         curPoint = findClosestPoint(next,targetPoint);
@@ -452,8 +455,7 @@ bool attemptRoutePair(
         while (curS && curD && route_ittr++ < 50) {
 
             // SRC advances toward DST
-            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS,
-                                pathPiecesS, pathTilesS, visitedTilesS, true))
+            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true))
                 break;
             if (curS == curD ||
                 curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
@@ -462,8 +464,7 @@ bool attemptRoutePair(
             }
 
             // DST advances toward SRC
-            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD,
-                                pathPiecesD, pathTilesD, visitedTilesD, false))
+            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, false))
                 break;
             if (curD == curS ||
                 curD->containsPointAllEdges(curPointS.x, curPointS.y)) {

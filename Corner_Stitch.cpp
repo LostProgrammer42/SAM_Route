@@ -914,7 +914,7 @@ bool electricallyAdjacent(
         deque<CornerStitch*> scan;
         scan.push_back(cur);
         seen.insert(cur);
-
+        
         while (!scan.empty()) {
             CornerStitch* t = scan.front();
             scan.pop_front();
