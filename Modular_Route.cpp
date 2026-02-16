@@ -55,7 +55,7 @@ void loadRectsFromFile(
             attr,
             netId,
             lx, ly, wx, wy,
-            false
+            0
         });
     }
 }
@@ -137,8 +137,16 @@ vector<RoutePair> generateRoutePairs(
 
         connected.push_back(anchor);
         unconnected.erase(remove(unconnected.begin(), unconnected.end(), anchor), unconnected.end());
+        struct CandidatePair {
+            CornerStitch* s;
+            CornerStitch* d;
+            float cost;
+            CandidatePair(CornerStitch* s_, CornerStitch* d_, float c_): s(s_), d(d_), cost(c_) {}
+        };
+        vector<CandidatePair> Candidates;
 
         while (!unconnected.empty()) {
+            Candidates.clear();
             CornerStitch* bestSrc = nullptr;
             CornerStitch* bestDst = nullptr;
             long bestCost = LONG_MAX;
@@ -158,9 +166,22 @@ vector<RoutePair> generateRoutePairs(
                         bestSrc = s;
                         bestDst = d;
                     }
+                    if(iter > 3){
+                        Candidates.push_back({s, d, cost});
+                    }
                 }
             }
-
+            if(iter > 3){
+                if (Candidates.empty()) break;
+                sort(Candidates.begin(), Candidates.end(), [](const CandidatePair& a, const CandidatePair& b) {
+                    return a.cost < b.cost;
+                });
+                int idx = 0;
+                idx = min((int)Candidates.size() - 1, iter - 3); 
+                cout << "ig I should try a new route pair, trying idx: " << idx << "\n";
+                bestSrc = Candidates[idx].s;
+                bestDst = Candidates[idx].d;
+            }
             if (!bestSrc || !bestDst) break;
 
             routePairs.push_back({bestSrc->getllx(), bestSrc->getlly(), bestDst->getllx(), bestDst->getlly(), net});
@@ -191,7 +212,6 @@ bool attemptRoutePair(
     CornerStitch* src = findTileContaining(planeRoots[routePlane], rpair.src_x, rpair.src_y);
     CornerStitch* dst = findTileContaining(planeRoots[routePlane], rpair.dst_x, rpair.dst_y);
     if (!src || !dst) return false;
-
     if (electricallyAdjacent(src, dst)) {
         cout << "Not routing Electrically Adjacent Tiles\n";
         return false;
@@ -199,7 +219,7 @@ bool attemptRoutePair(
 
     // Reset bloated roots and re-insert all rects
     for (int p = 0; p < 3; ++p) {
-        deleteRectAndCoalesce(bloatedRoots[p], -20, -20, 200, 200);
+        deleteRect(bloatedRoots[p], -20, -20, 200, 200);
     }
     for (auto &kv : rectsByLayer) {
         for (auto &r : kv.second) {
@@ -218,6 +238,17 @@ bool attemptRoutePair(
         int a = layerToAttr(layer);
         int plane = layerToPlane(layer);
         unsigned long b = layerBloat(layer);
+        auto it = rectsByLayer.find(a);
+        if (it != rectsByLayer.end()){
+            auto& vec = it->second;
+            std::stable_partition(
+                vec.begin(), vec.end(),
+                [&](const RectRecord& r){
+                    // keep these FIRST
+                    return (r.net != src->getNet());
+                }
+            );
+        }
         for (const auto &r : rectsByLayer[a]) {
             CornerStitch* t = findTileContaining(bloatedRoots[plane], r.lx + (long)r.wx*0.5, r.ly + (long)r.wy*0.5);
             if (!t) continue;
@@ -230,6 +261,17 @@ bool attemptRoutePair(
     }
     for (int i = 0; i < 3; ++i) coalesce(bloatedRoots[i],20);
     exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
+    // if(routePlane==1) x++;
+    // if(x==7 && routePlane==1){
+    //     for (const auto &r : rectsByLayer[L_M1]) {
+    //         CornerStitch* t = findTileContaining(bloatedRoots[r.plane], r.lx + (long)r.wx*0.5, r.ly + (long)r.wy*0.5);
+    //         if (!t) continue;
+    //         if (t == src_in_bloated_plane || t == dst_in_bloated_plane) t->setAttr(L_PTR_RIGHT);
+    //         else t->setAttr(L_PTR_LEFT);
+    //         exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
+    //     }
+    //     assert(false);
+    // }
 
     // Ports: use bloated plane corresponding to routePlane
     bool useExtraPorts = (iter > 2);
@@ -302,7 +344,7 @@ bool attemptRoutePair(
         vector<CornerStitch*> pathTilesS;
         vector<CornerStitch*> visitedTilesS;
         vector<unsigned long> routeCostsS;
-        pathTilesS.push_back(nullptr);
+        pathTilesS.push_back(curS);
         visitedTilesS.push_back(start);
 
         // DST front
@@ -311,7 +353,7 @@ bool attemptRoutePair(
         vector<CornerStitch*> pathTilesD;
         vector<CornerStitch*> visitedTilesD;
         vector<unsigned long> routeCostsD;
-        pathTilesD.push_back(nullptr);
+        pathTilesD.push_back(curD);
         visitedTilesD.push_back(end);
 
         int route_ittr = 0;
@@ -319,7 +361,7 @@ bool attemptRoutePair(
 
         auto advanceOneStep = [&](CornerStitch*& cur, Point& curPoint, const Point& targetPoint,
             vector<unsigned long>& routeCosts, vector<vector<Point>>& pathPieces, vector<CornerStitch*>& pathTiles,
-            vector<CornerStitch*>& visitedTiles) -> bool{
+            vector<CornerStitch*>& visitedTiles, bool isSrc) -> bool{
 
             long MAX_TRIES = 1000;
             long i = 0;
@@ -330,16 +372,22 @@ bool attemptRoutePair(
                 vector<CornerStitch*> leftTiles   = leftNeighbors(cur);
                 vector<CornerStitch*> bottomTiles = bottomNeighbors(cur);
                 CornerStitch* next = nullptr;
+                CornerStitch* prev = pathTiles.back();
                 Point exit;
                 long bestCost = LONG_MAX;
                 for (auto nbrs : {rightTiles, topTiles, leftTiles, bottomTiles}) {
                     for (auto nbr : nbrs) {
-                        if(!(nbr->isSpace() || 
-                        (nbr->getAttr() == src->getAttr() && nbr->getNet()  == src->getNet()))) continue;
-                        //if(nbr == start || nbr == end) continue;
                         if(nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
-                        if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 
-                        && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
+                        if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
+                        if(cur->isBloat()){
+                            if(pathTiles.size()==2 || (prev && prev->isBloat())){
+                                if(nbr->isBloat()) continue;
+                                else if(!(nbr->isSpace() || (nbr->getAttr()==src->getAttr() && nbr->getNet()==src->getNet()))) continue;
+                            }
+                            else if(!(!nbr->isBloat() && cur->getAttr()==nbr->getAttr() && cur->getNet()==nbr->getNet())) continue;
+                        }
+                        else if(!(nbr->isSpace() || (nbr->getAttr()==src->getAttr() && nbr->getNet()==src->getNet()))) continue;
+                        
 
                         Point candidate = findClosestPoint(nbr, targetPoint);
                         long cost = llabs(candidate.x - targetPoint.x) +
@@ -374,9 +422,17 @@ bool attemptRoutePair(
                     }
                     continue;
                 }
+                if(next->getNet() == start->getNet()){
+                    CornerStitch* origin = isSrc ? start : end;
+                    if(electricallyAdjacent(next,origin)){
+                        cur = next;
+                        curPoint = findClosestPoint(next,targetPoint);
+                        routeCosts.clear(); pathTiles.clear(); pathPieces.clear();
+                        pathTiles.push_back(cur);
+                        visitedTiles.push_back(cur);
+                    }
+                }
                 
-    rebuildRectsByLayer(planeRoots, rectsByLayer);
-
                 exit = findClosestPoint(next, curPoint); 
                 bool dir = inferPreferHorizontal(pathPieces, true);
                 pathPieces.push_back(pathInTile(cur, curPoint, exit, dir));
@@ -397,7 +453,7 @@ bool attemptRoutePair(
 
             // SRC advances toward DST
             if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS,
-                                pathPiecesS, pathTilesS, visitedTilesS))
+                                pathPiecesS, pathTilesS, visitedTilesS, true))
                 break;
             if (curS == curD ||
                 curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
@@ -407,7 +463,7 @@ bool attemptRoutePair(
 
             // DST advances toward SRC
             if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD,
-                                pathPiecesD, pathTilesD, visitedTilesD))
+                                pathPiecesD, pathTilesD, visitedTilesD, false))
                 break;
             if (curD == curS ||
                 curD->containsPointAllEdges(curPointS.x, curPointS.y)) {
@@ -451,21 +507,25 @@ bool attemptRoutePair(
 
             for (auto &pathPiece : pathPiecesG) {
                 for (auto &point : pathPiece) {
+                    if(electricallyAdjacent(src,dst)) return true;
                     if (point.x == current.x && point.y == current.y) continue;
                     else if (point.x == current.x) {
                         long y = point.y > current.y ? current.y : point.y;
                         long w = llabs(point.y - current.y) + 2;
-                        insertTileRect(planeRoots[routePlane], point.x - 1, y - 1, 2, w, src->getAttr(), src->getNet(), 1);
+                        bool ok = insertTileRect(planeRoots[routePlane], point.x - 1, y - 1, 2, w, src->getAttr(), src->getNet(), 1);
+                        if(!ok) cout << "Insertion failed" << endl;
                     } else {
                         long x = point.x > current.x ? current.x : point.x;
                         long w = llabs(point.x - current.x) + 2;
-                        insertTileRect(planeRoots[routePlane], x - 1, point.y - 1, w, 2, src->getAttr(), src->getNet(), 1);
+                        bool ok = insertTileRect(planeRoots[routePlane], x - 1, point.y - 1, w, 2, src->getAttr(), src->getNet(), 1);
+                        if(!ok) cout << "Insertion failed" << endl;
                     }
                     current = point;
                 }
             }
             return true;
-        } else {
+        } 
+        else {
             failedRoutes.push_back(make_pair(bestSrc, bestDst));
             cout << "Routing between " << bestSrc.x << "," << bestSrc.y << " and "
                  << bestDst.x << "," << bestDst.y << " : fail\n";
@@ -533,6 +593,6 @@ void routeLayer(
         attemptRoutePair(rpair, routePlane, planeRoots, bloatedRoots, rectsByLayer, iter);
         rebuildRectsByLayer(planeRoots, rectsByLayer);
     }
-    virtualTileCommit(planeRoots[routePlane]);
+    insertedTileCommit(planeRoots[routePlane]);
     rebuildRectsByLayer(planeRoots, rectsByLayer);
 }

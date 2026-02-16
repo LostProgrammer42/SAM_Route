@@ -86,7 +86,7 @@ unsigned int layerToAttr(const string& layer) {
 unsigned long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
-    if (layer == "polysilicon") return 3;
+    if (layer == "polysilicon") return 4;
     if (layer == "li") return 5;
     if (layer == "m1") return 3;
     if (layer == "m2") return 0;
@@ -100,7 +100,7 @@ struct RectRecord {
     unsigned int net;
     long lx, ly;
     unsigned long wx, wy;
-    bool virt;
+    unsigned int virt;
 };
 
 enum Dir { LEFT=0, RIGHT, UP, DOWN };
@@ -406,7 +406,7 @@ void rebuildRectsByLayer(
                     lly,
                     (unsigned long)urx - llx,
                     (unsigned long)ury - lly,
-                    t->isVirt()
+                    t->getVirt()
                 });
             }
 
