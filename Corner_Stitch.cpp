@@ -62,7 +62,7 @@ class CornerStitch{
         
         //Flags for Space/Virtual Tile
         unsigned int space:1;
-        unsigned int virt:1;
+        unsigned int virt:2;
         
         //6 bits of Attribute 
         unsigned int attr:6;
@@ -70,16 +70,18 @@ class CornerStitch{
         //6 bits of Net Type
         unsigned int net:6;
 
-         bool is_bloat_ = false;
-         int  bloat_owner_net = -1; // -1 = no bloat owner
+        CornerStitch* ContactBrother_1;
+        CornerStitch* ContactBrother_2;
+
+
     public:
         //Constructors
         CornerStitch():
-            llx(MIN_VALUE), lly(MIN_VALUE), space(1), virt(1), attr(0), net(0)
+            llx(MIN_VALUE), lly(MIN_VALUE), space(1), virt(1), attr(0), net(0), ContactBrother_1(nullptr), ContactBrother_2(nullptr)
             {ll.x = ll.y = ur.x = ur.y = nullptr;}
         
         CornerStitch(long _llx, long _lly, unsigned int _space=1, unsigned int _virt=0, unsigned int _attr=0, unsigned int _net = 0):
-            llx(_llx), lly(_lly), space(_space), virt(_virt), attr(_attr), net(_net)
+            llx(_llx), lly(_lly), space(_space), virt(_virt), attr(_attr), net(_net), ContactBrother_1(nullptr), ContactBrother_2(nullptr)
             {ll.x = ll.y = ur.x = ur.y = nullptr;}
         
         ~CornerStitch() = default;
@@ -90,9 +92,15 @@ class CornerStitch{
         long geturx() const { return ur.x ? ur.x->llx : MAX_VALUE; } // Check if UR.x Tile exists, if yes return it's lower left corner
         long getury() const { return ur.y ? ur.y->lly : MAX_VALUE; }
         unsigned int getNet() const {return net;}
+        CornerStitch* getContactBrother_1(){ return ContactBrother_1;}
+        CornerStitch* getContactBrother_2(){ return ContactBrother_2;}
         bool isSpace() const { return space; }
         unsigned int getAttr() const { return attr; }
-        bool isVirt() const { return virt; }
+        unsigned int getVirt() const { return virt; }
+        bool isVirt() const { return (virt>0); }
+        bool isInsertedVirt() const { return virt==1; }
+        bool isBloat() const { return (virt==2); }
+
         CornerStitch* left()   const { return ll.x; }
         CornerStitch* bottom() const { return ll.y; }
         CornerStitch* right()  const { return ur.x; }
@@ -106,7 +114,9 @@ class CornerStitch{
         void setBottom(CornerStitch* B) { ll.y = B; }
         void setRight(CornerStitch* R)  { ur.x = R; }
         void setTop(CornerStitch* T)    { ur.y = T; }
-        
+        void setContactBrother_1(CornerStitch* Bro)    {ContactBrother_1 = Bro; }
+        void setContactBrother_2(CornerStitch* Bro)    {ContactBrother_2 = Bro; }
+
 
         bool containsPoint(float x, float y) const {
             return (getllx() <= x && x < geturx() && getlly() <= y && y < getury());
@@ -122,11 +132,6 @@ class CornerStitch{
             if (ly + (long)wy <= getlly()) return false;
             return true;
         }
-
-        bool isBloat() const { return is_bloat_; }
-        int  bloatOwner() const { return bloat_owner_net; }
-        // mark/unmark bloat; owner=-1 removes owner.
-        void setBloat(bool v, int owner = -1) { is_bloat_ = v; bloat_owner_net = (v ? owner : -1); }
 };
 
 
@@ -263,7 +268,8 @@ bool splitHorizontal(CornerStitch* t, long splitY) {
     vector<CornerStitch*> rightTiles = rightNeighbors(t);
     vector<CornerStitch*> leftTiles = leftNeighbors(t);
     vector<CornerStitch*> topTiles = topNeighbors(t);
-    CornerStitch* top = new CornerStitch(t->getllx(), splitY, t->isSpace(), t->isVirt(), t->getAttr(), t->getNet());
+
+    CornerStitch* top = new CornerStitch(t->getllx(), splitY, t->isSpace(), t->getVirt(), t->getAttr(), t->getNet());
 
     // === Fix pointers of top tile ===
     // Top tile inherits right, top pointers from t
@@ -320,9 +326,7 @@ bool splitVertical(CornerStitch* t, long splitX) {
     vector<CornerStitch*> topTiles = topNeighbors(t);
 
     // create new right piece (inherits flags/attrs/net from t)
-    CornerStitch* rightTile = new CornerStitch(splitX, t->getlly(),
-                                               t->isSpace(), t->isVirt(),
-                                               t->getAttr(), t->getNet());
+    CornerStitch* rightTile = new CornerStitch(splitX, t->getlly(), t->isSpace(), t->getVirt(), t->getAttr(), t->getNet());
 
     // === Fix pointers of right tile ===
     // Right tile inherits right, top pointers from t
@@ -433,7 +437,7 @@ bool mergeHorizontalOnce(CornerStitch* left,  CornerStitch* &anchor) {
     if (!left) return false;
     CornerStitch* right = left->right();
     if (!right) return false;
-    if (left->isVirt() != right->isVirt()) return false;
+    if (left->getVirt() != right->getVirt()) return false;
     if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
@@ -472,7 +476,7 @@ bool mergeVerticalOnce(CornerStitch* bottom, CornerStitch* &anchor){
     if (!bottom) return false;
     CornerStitch* top = bottom->top();
     if (!top) return false;
-    if (bottom->isVirt() != top->isVirt()) return false;
+    if (bottom->getVirt() != top->getVirt()) return false;
     if (bottom->getNet() != top->getNet()) return false;    
     if (bottom->getAttr() != top->getAttr()) return false;
     if (bottom->isSpace() != top->isSpace()) return false;
@@ -510,7 +514,7 @@ bool mergeVerticalOnce(CornerStitch* bottom, CornerStitch* &anchor){
 bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
-    if (left->isVirt() != right->isVirt()) return false;
+    if (left->getVirt() != right->getVirt()) return false;
     if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
@@ -534,7 +538,7 @@ bool splitRightToMatchLeft(CornerStitch* &anchor, CornerStitch* left, CornerStit
 bool splitLeftToMatchRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (right->left() != left) return false;
-    if (left->isVirt() != right->isVirt()) return false;
+    if (left->getVirt() != right->getVirt()) return false;
     if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
@@ -562,7 +566,7 @@ bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch*
     if (!anchor || !left || !right) return false;
     if (left->right() != right) return false;
     if (left->getNet() != right->getNet()) return false; 
-    if (left->isVirt() != right->isVirt()) return false;   
+    if (left->getVirt() != right->getVirt()) return false;   
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
     // ensure right column has a slice that matches left's vertical span
@@ -598,7 +602,7 @@ bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch*
 bool alignAndMergeLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* right) {
     if (!anchor || !left || !right) return false;
     if (right->left() != left) return false;
-    if (left->isVirt() != right->isVirt()) return false;
+    if (left->getVirt() != right->getVirt()) return false;
     if (left->getNet() != right->getNet()) return false;    
     if (left->getAttr() != right->getAttr()) return false;
     if (left->isSpace() != right->isSpace()) return false;
@@ -723,16 +727,18 @@ int coalesce(CornerStitch* &anchor, int maxRounds = 20) {
 }
 
 // Delete a single tile 't' (mark space) and then coalesce around anchor.
-bool deleteTileAndCoalesce(CornerStitch* &anchor, CornerStitch* t) {
+bool deleteTile(CornerStitch* &anchor, CornerStitch* t) {
     if (!anchor || !t) return false;
+    t->setVirt(0);
     t->setSpace(1); // mark as free
     // try to merge/align until stable
     coalesce(anchor, 50);
     return true;
 }
 
-bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, unsigned long wx, unsigned long wy) {
+bool deleteRect(CornerStitch* &anchor, long lx, long ly, unsigned long wx, unsigned long wy) {
     if (!anchor) return false;
+    
     auto list = tilesInRect(anchor, lx, ly, wx, wy);
     if (list.empty()) return false;
     for (auto tt : list) {
@@ -741,6 +747,30 @@ bool deleteRectAndCoalesce(CornerStitch* &anchor, long lx, long ly, unsigned lon
             tt->geturx() <= lx + (long)wx && tt->getury() <= ly + (long)wy) {
             tt->setVirt(0);
             tt->setSpace(1);
+        }
+    }
+    coalesce(anchor, 50);
+    return true;
+}
+
+bool changeAttrRect(CornerStitch* &anchor, long lx, long ly, unsigned long wx, unsigned long wy, unsigned int newAttr) {
+    if (!anchor) return false;
+     // Split horizontal edges first (bottom and top) for horizontal span [lx, rx)
+    if (!splitHorizontalEdge(anchor, ly, lx+0.1, lx+(long)wx-0.1)) return false;
+    if (!splitHorizontalEdge(anchor, ly+(long)wy, lx+0.1, lx+(long)wx-0.1)) return false;
+
+    // Then split vertical edges along x = lx and x = rx for full vertical span [ly, ry)
+    if (!splitVerticalEdge(anchor, lx, ly+0.1, ly+(long)wy-0.1)) return false;
+    if (!splitVerticalEdge(anchor, lx+(long)wx, ly+0.1, ly+(long)wy-0.1)) return false;
+    cout << "lx: " << lx << " ly: " << ly << " wx: " << wx << " wy: " << wy << endl;
+    auto list = tilesInRect(anchor, lx, ly, wx, wy);
+    if (list.empty()) return false;
+    for (auto tt : list) {
+        if (!tt) continue;
+        if (tt->getllx() >= lx && tt->getlly() >= ly &&
+            tt->geturx() <= lx + (long)wx && tt->getury() <= ly + (long)wy) {
+            tt->setSpace(0);
+            tt->setAttr(newAttr);
         }
     }
     coalesce(anchor, 50);
@@ -787,7 +817,7 @@ bool insertTileRect(CornerStitch* &anchor,
     return true;
 }
 
-bool virtualTileCommit(CornerStitch* &anchor){
+bool insertedTileCommit(CornerStitch* &anchor){
     if(!anchor) return false;
     unordered_set<CornerStitch*> seen;
     deque<CornerStitch*> dq;
@@ -796,7 +826,7 @@ bool virtualTileCommit(CornerStitch* &anchor){
     seen.insert(anchor);
     while (!dq.empty()) {
         CornerStitch* t = dq.front(); dq.pop_front();
-        if(t && t->isVirt()) t->setVirt(0);
+        if(t && t->isInsertedVirt()) t->setVirt(0);
         CornerStitch* nbrs[4] = { t->left(), t->right(), t->bottom(), t->top() };
         for (auto nb : nbrs) {
             if (!nb) continue;
@@ -808,7 +838,7 @@ bool virtualTileCommit(CornerStitch* &anchor){
     return true;
 }
 
-bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0, bool debug = false){
+bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bloat_left=0, unsigned long bloat_bottom=0, unsigned long bloat_top=0){
     if(!t) return false;
     if(bloat_right == 0 && bloat_left == 0 && bloat_bottom == 0 && bloat_top == 0) return true;
     long urx=t->geturx(), ury=t->getury(), llx=t->getllx(), lly=t->getlly();
@@ -826,12 +856,12 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
     for(auto tile : tilesInRect(t,probeL->llx(),probeL->lly(),probeR->urx()-probeL->llx()+1,probeL->ury()-probeL->lly()+1)){
             if(!tile || !tile->isSpace()) continue;
             tile->setSpace(0);
-            tile->setVirt(1);
+            tile->setVirt(2);
             tile->setAttr(t->getAttr());
-            // tile->setNet(t->getNet());
-            tile->setBloat(true, (int)t->getNet());
+            tile->setNet(t->getNet());
     }
     coalesce(t,50);
+    delete probeR, probeL, probeB, probeT;
     return true;
 }
 
@@ -864,11 +894,11 @@ bool moveTile(
     }
 
     // 3. Delete old tile (edge-walk delete)
-    if (!deleteRectAndCoalesce(root, old_lx, old_ly, wx, wy))
+    if (!deleteRect(root, old_lx, old_ly, wx, wy))
         return false;
 
     // 4. Insert at new location
-    if (!insertTileRect(root, new_lx, new_ly, wx, wy, tile->getAttr(), tile->getNet(), tile->isVirt()))
+    if (!insertTileRect(root, new_lx, new_ly, wx, wy, tile->getAttr(), tile->getNet(), tile->getVirt()))
         return false;
 
     return true;
@@ -892,62 +922,6 @@ inline bool geomTouch(const CornerStitch* a, const CornerStitch* b) {
     return xTouch && yTouch;
 }
 
-
-bool electricallyAdjacent(
-    CornerStitch* a,
-    CornerStitch* b
-) {
-    if (!a || !b) return false;
-    if (a->isSpace() || b->isSpace()) return false;
-    if (a->getNet() != b->getNet()) return false;
-    if (a == b) return true;
-    if (geomTouch(a,b)) return true;
-    unsigned int net = a->getNet();
-
-    unordered_set<CornerStitch*> visited;
-    deque<CornerStitch*> q;
-
-    q.push_back(a);
-    visited.insert(a);
-
-    while (!q.empty()) {
-        CornerStitch* cur = q.front();
-        q.pop_front();
-
-        // Traverse ALL tiles geometrically touching cur
-        unordered_set<CornerStitch*> seen;
-        deque<CornerStitch*> scan;
-        scan.push_back(a);
-        seen.insert(a);
-
-        while (!scan.empty()) {
-            CornerStitch* t = scan.front();
-            scan.pop_front();
-            if (!t) continue;
-
-            if (!t->isSpace() && t->getNet() == net) {
-                if (t == b && geomTouch(cur, t))
-                    return true;
-
-                if (!visited.count(t) && geomTouch(cur, t)) {
-                    visited.insert(t);
-                    q.push_back(t);
-                }
-            }
-
-            CornerStitch* nbrs[4] = {
-                t->left(), t->right(), t->top(), t->bottom()
-            };
-            for (auto* nb : nbrs) {
-                if (nb && seen.insert(nb).second)
-                    scan.push_back(nb);
-            }
-        }
-    }
-
-    return false;
-}
-
 enum LayerType {
     L_NONE = 0,
     L_NDIFF,
@@ -957,8 +931,14 @@ enum LayerType {
     L_POLY,
     L_LI,
     L_M1,
-    L_M2
+    L_M2,
+    L_POLYCON,
+    L_LIBRDRCON,
+    L_MCON,
+    L_NDC,
+    L_PDC
 };
+
 #define L_PTR_LEFT   50
 #define L_PTR_RIGHT  51
 #define L_PTR_TOP    52
@@ -975,6 +955,9 @@ string attrToLayer(unsigned int attr) {
         case L_LI:          return "li";
         case L_M1:          return "m1";
         case L_M2:          return "m2";
+        case L_POLYCON:     return "polycon";
+        case L_LIBRDRCON:   return "librdrcon";
+        case L_MCON:        return "mcon"; 
         case L_PTR_LEFT:    return "left";
         case L_PTR_RIGHT:   return "right";
         case L_PTR_TOP:     return "top";
@@ -982,6 +965,51 @@ string attrToLayer(unsigned int attr) {
         default:            return "none";
     }
 }
+
+bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
+    if (!a || !b) return false;
+    if (a->isSpace() || b->isSpace()) return false;
+    if (a->getNet() != b->getNet()) return false;
+    if (a == b) return true;
+    if (geomTouch(a, b)) return true;
+
+    unsigned int net = a->getNet();
+    unordered_set<CornerStitch*> visited;
+    deque<CornerStitch*> q;
+    q.push_back(a);
+    visited.insert(a);
+
+    while (!q.empty()) {
+        CornerStitch* cur = q.front(); q.pop_front();
+
+        // Collect only TRUE geometric neighbors via neighbor functions
+        vector<CornerStitch*> neighbors;
+        for (auto* t : rightNeighbors(cur))   neighbors.push_back(t);
+        for (auto* t : leftNeighbors(cur))    neighbors.push_back(t);
+        for (auto* t : topNeighbors(cur))     neighbors.push_back(t);
+        for (auto* t : bottomNeighbors(cur))  neighbors.push_back(t);
+
+        // Also follow contact brothers if cur is a contact tile
+        if (cur->getAttr() == L_POLYCON || 
+            cur->getAttr() == L_LIBRDRCON || 
+            cur->getAttr() == L_MCON) {
+            if (auto* cb1 = cur->getContactBrother_1()) neighbors.push_back(cb1);
+            if (auto* cb2 = cur->getContactBrother_2()) neighbors.push_back(cb2);
+        }
+
+        for (auto* t : neighbors) {
+            if (!t || t->isSpace() || t->isBloat()) continue;
+            if (t->getNet() != net) continue;
+            if (t == b) return true;
+            if (!visited.count(t)) {
+                visited.insert(t);
+                q.push_back(t);
+            }
+        }
+    }
+    return false;
+}
+
 
 
 void exportTiles(CornerStitch* &anchor, const string& filename) {

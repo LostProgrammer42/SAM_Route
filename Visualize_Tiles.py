@@ -11,6 +11,9 @@ plane_files = [
 
 Tile_boundaries = False
 Tile_names = False
+Tile_nets = True
+Zoom_to_fit = True
+
 # ---------- COLOR MAP ----------
 def layer_color(layer):
     layer = layer.lower()
@@ -26,7 +29,7 @@ def layer_color(layer):
         return "#00008B"   # dark blue
     if layer == "polysilicon":
         return "red"
-    if layer.startswith("m"):
+    if layer.startswith("m") and layer != "mcon":
         return "purple"
     if layer == "left":
         return "orange"
@@ -38,8 +41,17 @@ def layer_color(layer):
         return "black"
     if layer == "li":
         return "#ECBA6F"
+    if layer == "polycon":
+        return "#12A7BB"
+    if layer == "mcon":
+        return "#6D2483"
     return "gray"
 
+def layer_hatch(layer):
+    layer = layer.lower()
+    if layer == "polycon" or layer == "mcon":
+        return "xxxx"
+    return None  # no hatch
 # ---------- LOAD ALL TILES ----------
 all_tiles = []
 
@@ -60,6 +72,7 @@ PLANE_STYLE = {
 }
 for t in all_tiles:
     color = layer_color(t["layer"])
+    hatch = layer_hatch(t["layer"])
     filled = t["filled"]
     style = PLANE_STYLE[t["plane"]]
     rect = Rectangle(
@@ -69,6 +82,7 @@ for t in all_tiles:
         linewidth=0.5 if filled else 1,
         edgecolor="black" if Tile_boundaries else (color if filled else "none"),
         facecolor=color if filled else "none",
+        hatch=hatch if filled else None,
         alpha= style["alpha"] if filled else 1.0,
         zorder=10 + t["plane"]   # higher plane on top
     )
@@ -84,7 +98,7 @@ for t in all_tiles:
             zorder=30
         )
     # draw net id (only if filled)
-    if filled and t["net"] != 0:
+    if filled and t["net"] != 0 and Tile_nets:
         cx = t["llx"] + t["wx"] / 2
         cy = t["lly"] + t["wy"] / 2
         ax.text(cx, cy, str(t["net"]),
@@ -99,10 +113,22 @@ ax.set_ylabel("y")
 ax.set_title("Corner Stitch Layout (3 planes)")
 ax.grid(True, linestyle=":", linewidth=0.5)
 
-# auto bounds
-xs = [t["llx"] for t in all_tiles] + [t["llx"] + t["wx"] for t in all_tiles]
-ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
-ax.set_xlim(min(xs) - 5, max(xs) + 5)
-ax.set_ylim(min(ys) - 5, max(ys) + 5)
+if Zoom_to_fit: 
+    valid_tiles = [
+        t for t in all_tiles
+        if t["filled"] and t["layer"].lower() != "none"
+    ]
+
+    # compute bounds only from valid tiles
+    xs = [t["llx"] for t in valid_tiles] + [t["llx"] + t["wx"] for t in valid_tiles]
+    ys = [t["lly"] for t in valid_tiles] + [t["lly"] + t["wy"] for t in valid_tiles]
+
+    ax.set_xlim(min(xs) - 5, max(xs) + 5)
+    ax.set_ylim(min(ys) - 5, max(ys) + 5)
+else: 
+    xs = [t["llx"] for t in all_tiles] + [t["llx"] + t["wx"] for t in all_tiles]
+    ys = [t["lly"] for t in all_tiles] + [t["lly"] + t["wy"] for t in all_tiles]
+    ax.set_xlim(min(xs) - 5, max(xs) + 5)
+    ax.set_ylim(min(ys) - 5, max(ys) + 5)
 
 plt.show()

@@ -13,12 +13,17 @@ int layerToPlane(const string& layer) {
     if (layer == "li")
         return 1; //local interconnect
 
-    if (layer == "m1")
+    if (layer == "m1" || layer == "mcon")
         return 2;    //metal1
 
     if (layer == "m2")
         return 3; // metal2
-
+    
+    if (layer == "polycon")
+        return 0;
+    if(layer == "librdrcon")
+        return 1;
+    
     return -1; 
 }
 
@@ -80,6 +85,10 @@ unsigned int layerToAttr(const string& layer) {
     if (layer == "li")           return L_LI;
     if (layer == "m1")           return L_M1;    
     if (layer == "m2")           return L_M2;
+    if (layer == "polycon")      return L_POLYCON;
+    if (layer == "librdrcon")      return L_LIBRDRCON;
+    if (layer == "mcon")      return L_MCON;
+
     return L_NONE;
 }
 
@@ -100,7 +109,7 @@ struct RectRecord {
     unsigned int net;
     long lx, ly;
     unsigned long wx, wy;
-    bool virt;
+    unsigned int virt;
 };
 
 enum Dir { LEFT=0, RIGHT, UP, DOWN };
@@ -203,25 +212,11 @@ vector<Port> getPorts(
     long cx = (lx + rx) / 2;
     long cy = (ly + ry) / 2;
 
-    auto freeInBloated = [&](float x, float y) -> bool {
+    auto freeInBloated = [&](float x, float y) {
         CornerStitch* b = findTileContaining(bloatedRoot, x, y);
         if (!b) return false;
-
-        // 1. empty space → always ok
         if (b->isSpace()) return true;
-
-        // 2. real same-net copper → ok
-        if (b->getNet() == t->getNet())
-            return true;
-
-        // 3. SAME-NET BLOAT → allow
-        if (b->isBloat() && b->bloatOwner() == t->getNet())
-            return true;
-
-        // 4. other-net bloat → block
-        if (b->isBloat() && b->bloatOwner() != t->getNet())
-            return false;
-        return false;
+        return (b->getNet() == t->getNet());  // allow same-net adjacency
     };
 
 
@@ -345,7 +340,6 @@ vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit, bool preferHo
 
 
 
-
 bool WholeNetElectricallyConnected(const vector<CornerStitch*>& polys) {
     if (polys.empty()) return true;
 
@@ -420,7 +414,7 @@ void rebuildRectsByLayer(
                     lly,
                     (unsigned long)urx - llx,
                     (unsigned long)ury - lly,
-                    t->isVirt()
+                    t->getVirt()
                 });
             }
 

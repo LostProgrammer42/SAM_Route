@@ -4,7 +4,6 @@
 #include <bits/stdc++.h>
 #include "Modular_Route.cpp"
 using namespace std;
-int z=0;
 
 int main(int argc, char** argv) {
     if (argc < 2) {
@@ -45,8 +44,8 @@ int main(int argc, char** argv) {
     } else {
         routingAttrs.push_back(L_POLY);
     }
-    // routingAttrs.push_back(L_M1);
-    int MAX_ITERS = 8;
+    routingAttrs.push_back(L_M1);
+    int MAX_ITERS = 4;
 
     substrateByNet.clear();
     rebuildLayerByNet(L_NDIFF, planeRoots, substrateByNet, rectsByLayer);
@@ -64,12 +63,12 @@ int main(int argc, char** argv) {
             }
         }
     }
-
+    bool interlayerViasDone = false;  
     for (int layer : routingAttrs) {
         int iter = 0;
-
         while (true) {
-            cout << "Layer " << layer << " Iteration: " << iter + 1 << "\n";
+            cout << "Layer " << layer << " Iteration: " << iter + 1 << "\n"; 
+            
             if (iter++ > MAX_ITERS) {
                 cout << "Max Iterations Reached for layer " << layer << "\n";
                 break;
@@ -111,14 +110,24 @@ int main(int argc, char** argv) {
             bool done = false;
             if (layer == L_POLY) done = allDone(polysByNet);
             else if (layer == L_M1) done = allDone(metalsByNet);
-
+            if(layer == L_M1 && done && !interlayerViasDone){
+                cout << "\n=== Placing inter-layer vias (poly -> LI -> M1) ===\n";
+                placeInterlayerVias(planeRoots, bloatedRoots, rectsByLayer);
+                fullyRoutedNetsByAttr[L_M1].clear();  // force re-check of M1 nets
+                iter = 0;
+                interlayerViasDone = true;
+                continue;
+            }
             if (done) {
                 cout << "Layer " << attrToLayer(layer) << " fully routed\n";
                 break;
             }
         }
     }
-
+   
+    // CornerStitch* t =  findTileContaining(planeRoots[0], 25,12);
+    // placeViaOnMetal(planeRoots,t,bloatedRoots,rectsByLayer);
+    // changeAttrRect(planeRoots[0],-20,-20,10,10,L_POLYCON);
     exportTiles(planeRoots[0], "plane0_routed.sam");
     exportTiles(planeRoots[1], "plane1_routed.sam");
     exportTiles(planeRoots[2], "plane2_routed.sam");
