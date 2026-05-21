@@ -443,7 +443,6 @@ bool mergeHorizontalOnce(CornerStitch* left,  CornerStitch* &anchor) {
     if (left->isSpace() != right->isSpace()) return false;
     if (left->getlly() != right->getlly() || left->getury() != right->getury()) return false;
 
-    
     vector<CornerStitch*> rightTiles = rightNeighbors(right);
     vector<CornerStitch*> topTiles = topNeighbors(right);
     vector<CornerStitch*> bottomTiles = bottomNeighbors(right);
@@ -571,9 +570,10 @@ bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch*
     if (left->isSpace() != right->isSpace()) return false;
     // ensure right column has a slice that matches left's vertical span
     if (!splitRightToMatchLeft(anchor, left, right)) return false;
+
     // probe a point inside the matching vertical span, but inside the right column
-    long probeX = right->getllx() + 0.1;
-    long probeY = left->getlly() + 0.1;
+    float probeX = right->getllx() + 0.1;
+    float probeY = left->getlly() + 0.1;
     CornerStitch* matching = findTileContaining(anchor, probeX, probeY);
     if (!matching) {
         // try nudging probe a bit to the right
@@ -589,13 +589,11 @@ bool alignAndMergeRight(CornerStitch* &anchor, CornerStitch* left, CornerStitch*
     // Now the tile immediately left of 'matching' should be a tile we can merge with.
     CornerStitch* leftOfMatching = matching->left();
     if (!leftOfMatching) return false;
-
     // If leftOfMatching exactly matches left's span, do a single merge.
     if (leftOfMatching->getlly() == matching->getlly() &&
         leftOfMatching->getury() == matching->getury()) {
         return mergeHorizontalOnce(leftOfMatching, anchor);
     }
-
     return false;
 }
 
@@ -610,8 +608,8 @@ bool alignAndMergeLeft(CornerStitch* &anchor, CornerStitch* left, CornerStitch* 
     if (!splitLeftToMatchRight(anchor, left, right)) return false;
 
     // probe a point inside the matching vertical span, but inside the left column
-    long probeX = left->geturx() - 0.1;
-    long probeY = right->getlly() + 0.1;
+    float probeX = left->geturx() - 0.1;
+    float probeY = right->getlly() + 0.1;
     CornerStitch* matching = findTileContaining(anchor, probeX, probeY);
     if (!matching) {
         // try nudging probe a bit to the left
@@ -776,6 +774,28 @@ bool changeAttrRect(CornerStitch* &anchor, long lx, long ly, unsigned long wx, u
     coalesce(anchor, 50);
     return true;
 }
+enum LayerType {
+    L_NONE = 0,
+    L_NDIFF,
+    L_PDIFF,
+    L_NTRANS,
+    L_PTRANS,
+    L_POLY,
+    L_LI,
+    L_M1,
+    L_M2,
+    L_POLYCON,
+    L_LIBRDRCON,
+    L_MCON,
+    L_NDC,
+    L_PDC
+};
+
+#define L_PTR_LEFT   50
+#define L_PTR_RIGHT  51
+#define L_PTR_TOP    52
+#define L_PTR_BOTTOM 53
+
 
 // Insert rectangle [lx..lx+wx) x [ly..ly+wy) by aligning edges (edge-walk) then marking tiles inside as filled.
 bool insertTileRect(CornerStitch* &anchor,
@@ -786,9 +806,15 @@ bool insertTileRect(CornerStitch* &anchor,
     long rx = lx + (long)wx;
     long ry = ly + (long)wy;
 
+    auto isContact = [](CornerStitch* t) -> bool {
+        return t && (t->getAttr() == L_LIBRDRCON ||
+                     t->getAttr() == L_MCON      ||
+                     t->getAttr() == L_POLYCON);
+    };
+
     //if any tile that fully lies inside is already filled -> reject
     auto intersect0 = tilesInRect(anchor, lx, ly, wx, wy);
-    for (auto t : intersect0) if (t && !(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
+    for (auto t : intersect0) if (t && !(t->isSpace() || isContact(t) || (t->getAttr()==attr && t->getNet()==net))) return false;
 
      // Split horizontal edges first (bottom and top) for horizontal span [lx, rx)
     if (!splitHorizontalEdge(anchor, ly, lx+0.1, rx-0.1)) return false;
@@ -803,6 +829,7 @@ bool insertTileRect(CornerStitch* &anchor,
     // Mark tiles fully inside rectangle as occupied (space=0) and set attr/net.
     for (auto t : finalTiles) {
         if (!t) continue;
+        if (isContact(t)) continue;
         if (!(t->isSpace() || (t->getAttr()==attr && t->getNet()==net))) return false;
         else if(!t->isVirt() && !t->isSpace() && (t->getAttr()==attr && t->getNet()==net)) continue;
         else if (t->getllx() >= lx && t->getlly() >= ly && t->geturx() <= rx && t->getury() <= ry) {
@@ -861,7 +888,10 @@ bool bloatByRect(CornerStitch* &t, unsigned long bloat_right=0, unsigned long bl
             tile->setNet(t->getNet());
     }
     coalesce(t,50);
-    delete probeR, probeL, probeB, probeT;
+    delete probeR;
+    delete probeL;
+    delete probeB;
+    delete probeT;
     return true;
 }
 
@@ -921,28 +951,6 @@ inline bool geomTouch(const CornerStitch* a, const CornerStitch* b) {
 
     return xTouch && yTouch;
 }
-
-enum LayerType {
-    L_NONE = 0,
-    L_NDIFF,
-    L_PDIFF,
-    L_NTRANS,
-    L_PTRANS,
-    L_POLY,
-    L_LI,
-    L_M1,
-    L_M2,
-    L_POLYCON,
-    L_LIBRDRCON,
-    L_MCON,
-    L_NDC,
-    L_PDC
-};
-
-#define L_PTR_LEFT   50
-#define L_PTR_RIGHT  51
-#define L_PTR_TOP    52
-#define L_PTR_BOTTOM 53
 
 
 string attrToLayer(unsigned int attr) {

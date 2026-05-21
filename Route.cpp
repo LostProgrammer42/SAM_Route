@@ -45,24 +45,63 @@ int main(int argc, char** argv) {
         routingAttrs.push_back(L_POLY);
     }
     routingAttrs.push_back(L_M1);
-    int MAX_ITERS = 4;
+    int MAX_ITERS = 8;
 
     substrateByNet.clear();
     rebuildLayerByNet(L_NDIFF, planeRoots, substrateByNet, rectsByLayer);
     rebuildLayerByNet(L_PDIFF, planeRoots, substrateByNet, rectsByLayer);
-    for (auto& kv : substrateByNet) {
-        unsigned int net = kv.first;
-        if (net == getNetId("#")) continue;
 
-        for (CornerStitch* tile : kv.second) {
-            if(tile->getAttr() == L_PDIFF){
-                placeContactSquare(planeRoots[layerToPlane("ndiff")],planeRoots[layerToPlane("m1")],L_M1,0,tile,net);
-            }
-            else{
-                placeContactSquare(planeRoots[layerToPlane("ndiff")],planeRoots[layerToPlane("m1")],L_M1,1,tile,net);
-            }
+    for (auto& kv : substrateByNet) {
+    unsigned int net = kv.first;
+    if (net == getNetId("#")) continue;
+
+    // Find the tile with a same-net top neighbor (the bottom tile of the L)
+    // and use the shared X overlap between them to place the contact on the top tile
+    for (CornerStitch* tile : kv.second) {
+
+        CornerStitch* topTile = nullptr;
+        for (auto* n : rightNeighbors(tile))
+            if (n && !n->isSpace()  && n->getAttr() == tile->getAttr()) { topTile = n; break; }
+
+        if (!topTile) {
+            // Lone tile, place normally
+            int side = (tile->getAttr() == L_PDIFF) ? 0 : 1;
+            placeContactSquare(planeRoots[layerToPlane("ndiff")],
+                               planeRoots[layerToPlane("m1")],
+                               L_M1, side, tile, net);
+            continue;
         }
+        cout << "Here\n";
+        // Shared X range between tile and its top neighbor
+        long shared_lx = min(tile->getllx(), topTile->getllx());
+        long shared_rx = max(tile->geturx(), topTile->geturx());
+
+        if (shared_rx - shared_lx < 5) continue; // too narrow
+
+        const long SQ = 5;
+        long x_margin  = (shared_rx - shared_lx - SQ) / 2;
+        long square_lx = shared_lx + x_margin;
+
+        // Place on topTile's Y, centered vertically within it
+        long y_margin;
+        long square_ly;
+        if((topTile->getury() - topTile->getlly()) / 2 < (tile->getury() - tile->getlly()) / 2){
+            y_margin = (topTile->getury() - topTile->getlly() - SQ) / 2;
+            square_ly = topTile->getlly() + y_margin;
+
+        }
+        else{
+            y_margin  = (tile->getury() - tile->getlly() - SQ) / 2;
+            square_ly = tile->getlly() + y_margin;
+        }
+        
+
+        insertTileRect(planeRoots[layerToPlane("m1")],
+                       square_lx, square_ly, SQ, SQ, L_M1, net);
+        coalesce(planeRoots[layerToPlane("m1")], 10);
     }
+}
+
     bool interlayerViasDone = false;  
     for (int layer : routingAttrs) {
         int iter = 0;
@@ -112,10 +151,24 @@ int main(int argc, char** argv) {
             else if (layer == L_M1) done = allDone(metalsByNet);
             if(layer == L_M1 && done && !interlayerViasDone){
                 cout << "\n=== Placing inter-layer vias (poly -> LI -> M1) ===\n";
+                
                 placeInterlayerVias(planeRoots, bloatedRoots, rectsByLayer);
+                exportTiles(planeRoots[0], "plane0_routed.sam");
+                exportTiles(planeRoots[1], "plane1_routed.sam");
+                exportTiles(planeRoots[2], "plane2_routed.sam");
+                // assert(false);
+
                 fullyRoutedNetsByAttr[L_M1].clear();  // force re-check of M1 nets
                 iter = 0;
                 interlayerViasDone = true;
+                polysByNet.clear();
+                metalsByNet.clear();
+                lisByNet.clear();
+
+                rebuildLayerByNet(L_POLY, planeRoots, polysByNet, rectsByLayer);
+                rebuildLayerByNet(L_LI, planeRoots, lisByNet, rectsByLayer);
+                rebuildLayerByNet(L_M1, planeRoots, metalsByNet, rectsByLayer);
+
                 continue;
             }
             if (done) {

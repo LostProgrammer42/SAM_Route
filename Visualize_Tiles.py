@@ -1,6 +1,7 @@
 import ast
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch
 
 # ---------- CONFIG ----------
 plane_files = [
@@ -12,7 +13,9 @@ plane_files = [
 Tile_boundaries = False
 Tile_names = False
 Tile_nets = True
+Tile_edge_color = True
 Zoom_to_fit = True
+Legend = False
 
 # ---------- COLOR MAP ----------
 def layer_color(layer):
@@ -80,7 +83,7 @@ for t in all_tiles:
         t["wx"],
         t["wy"],
         linewidth=0.5 if filled else 1,
-        edgecolor="black" if Tile_boundaries else (color if filled else "none"),
+        edgecolor="black" if Tile_boundaries else (color if (filled and Tile_edge_color) else "none"),
         facecolor=color if filled else "none",
         hatch=hatch if filled else None,
         alpha= style["alpha"] if filled else 1.0,
@@ -131,4 +134,56 @@ else:
     ax.set_xlim(min(xs) - 5, max(xs) + 5)
     ax.set_ylim(min(ys) - 5, max(ys) + 5)
 
+if Legend:
+    present_layers = []
+
+    # collect only visible layers
+    for t in all_tiles:
+        layer = t["layer"].lower()
+        if t["filled"] and layer not in present_layers:
+            present_layers.append(layer)
+
+    legend_elements = []
+
+    for layer in present_layers:
+
+        # use plane-0 alpha as default
+        alpha = PLANE_STYLE[0]["alpha"]
+
+        legend_elements.append(
+            Patch(
+                facecolor=layer_color(layer),
+                hatch=layer_hatch(layer),
+                alpha=alpha,
+                edgecolor=(0,0,0,0.3) if hatch else (0,0,0,0),
+                linewidth=0,
+                label=layer
+            )
+        )
+
+    ax.legend(
+        handles=legend_elements,
+        title="Layers",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+        fontsize=11,
+        title_fontsize=13,
+
+        # increase patch size
+        handlelength=2.2,
+        handleheight=1.3,
+        handletextpad=0.8,
+        borderpad=1.2,
+        labelspacing=0.8,
+
+        frameon=True
+    )
+
+plt.savefig(
+    "layout.pdf",
+    bbox_inches="tight",
+    facecolor="white",
+    format="pdf"
+)
 plt.show()
+

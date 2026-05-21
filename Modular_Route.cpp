@@ -8,7 +8,6 @@ using namespace std;
 unordered_map<int, vector<RectRecord>> rectsByLayer;
 unordered_map<unsigned int, vector<CornerStitch*>> polysByNet, metalsByNet, lisByNet, substrateByNet;
 unordered_map<int, unordered_set<unsigned int>> fullyRoutedNetsByAttr;
-
 // Load rectangles from .rect file, initialize planeRoots and bloatedRoots and rectsByLayer
 void loadRectsFromFile(
     const string &filename,
@@ -226,7 +225,10 @@ bool attemptRoutePair(
     unordered_map<int, vector<RectRecord>> &rectsByLayer,
     int iter,
     bool try_switch = true,
-    bool bloat_src = true
+    bool bloat_src = true,
+    bool advance_routepair = false,
+    bool attemptedMetalSwitch = false
+
 ) {
     // Find src/dst tiles strictly on the routePlane
     CornerStitch* src = findTileContaining(planeRoots[routePlane], rpair.src_x, rpair.src_y);
@@ -245,7 +247,6 @@ bool attemptRoutePair(
             insertTileRect(bloatedRoots[r.plane], r.lx, r.ly, r.wx, r.wy, r.attr, r.net, r.virt);
         }
     }
-
     
     // Bloating (per-plane)
     vector<string> allLayers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m1", "li"};
@@ -279,14 +280,16 @@ bool attemptRoutePair(
             }
         }
     }
-    for (int i = 0; i < 3; ++i) coalesce(bloatedRoots[i],20);
-    exportTiles(bloatedRoots[routePlane],"plane_bloated.sam");
+   
 
     // Ports: use bloated plane corresponding to routePlane
     bool useExtraPorts = (iter > 2);
     auto srcPorts = getPorts(src, bloatedRoots[routePlane], useExtraPorts);
     auto dstPorts = getPorts(dst, bloatedRoots[routePlane], useExtraPorts);
-
+    if(advance_routepair){
+        srcPorts = getPortsForNet(src, bloatedRoots[routePlane], useExtraPorts);
+        dstPorts = getPortsForNet(dst, bloatedRoots[routePlane], useExtraPorts);
+    }
     cout << "\n=== SRC PORTS === (plane " << routePlane << ")\n";
     for (size_t i = 0; i < srcPorts.size(); ++i) {
         cout << "S" << i << ": (" << srcPorts[i].x << "," << srcPorts[i].y <<")" << " , Normal: " << srcPorts[i].normal<<"\n";
@@ -318,9 +321,15 @@ bool attemptRoutePair(
             }
         }
         if (failedRoutes.size() == srcPorts.size() * dstPorts.size() || bestCost == LONG_MAX) {
-            attemptSwitchRoutingMetal(rpair,iter,planeRoots,bloatedRoots,rectsByLayer);
-            noRoute = true;
-            break;}
+            cout << "HERE" <<endl;
+            if(!attemptedMetalSwitch){
+                cout << "HERE11" <<endl;
+                attemptSwitchRoutingMetal(rpair,iter,planeRoots,bloatedRoots,rectsByLayer);
+                noRoute = true;
+                break;
+            }
+            break;
+        }
         if (count(failedRoutes.begin(), failedRoutes.end(), make_pair(bestSrc, bestDst)) > 0) continue;
 
         CornerStitch* start = src_in_bloated_plane;
@@ -373,11 +382,10 @@ bool attemptRoutePair(
 
         auto advanceOneStep = [&](CornerStitch*& cur, Point& curPoint, const Point& targetPoint,
             vector<unsigned long>& routeCosts, vector<vector<Point>>& pathPieces, vector<CornerStitch*>& pathTiles,
-            vector<CornerStitch*>& visitedTiles, bool isSrc) -> bool{
+            vector<CornerStitch*>& visitedTiles, bool isSrc, int firstNormal = -1) -> bool{
 
             long MAX_TRIES = 1000;
             long i = 0;
-
             while(cur && i++<1000){
                 vector<CornerStitch*> rightTiles  = rightNeighbors(cur);
                 vector<CornerStitch*> topTiles    = topNeighbors(cur);
@@ -387,7 +395,17 @@ bool attemptRoutePair(
                 CornerStitch* prev = pathTiles.back();
                 Point exit;
                 long bestCost = LONG_MAX;
-                for (auto nbrs : {rightTiles, topTiles, leftTiles, bottomTiles}) {
+                bool isFirstStep = pathPieces.empty();
+
+                 for (auto& [nbrs, dir] : vector<pair<vector<CornerStitch*>, int>>{
+                        {rightTiles,  RIGHT},
+                        {topTiles,    UP},
+                        {leftTiles,   LEFT},
+                        {bottomTiles, DOWN}
+                    }) {
+                    // Enforce normal direction on first step only
+                    if (isFirstStep && firstNormal != -1 && dir != firstNormal) continue;
+
                     for (auto nbr : nbrs) {
                         if(nbr == pathTiles.back() && nbr == visitedTiles.back()) continue;
                         if(count(visitedTiles.begin(),visitedTiles.end(),nbr) > 0 && count(pathTiles.begin(),pathTiles.end(),nbr) == 0 ) continue;
@@ -404,7 +422,7 @@ bool attemptRoutePair(
                         Point candidate = findClosestPoint(nbr, targetPoint);
                         long cost = llabs(candidate.x - targetPoint.x) +
                                     llabs(candidate.y - targetPoint.y);
-
+                        
                         if (cost < bestCost) {
                             bestCost = cost;
                             next = nbr;
@@ -465,7 +483,7 @@ bool attemptRoutePair(
         while (curS && curD && route_ittr++ < 50) {
 
             // SRC advances toward DST
-            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true))
+            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal))
                 break;
             if (curS == curD ||
                 curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
@@ -474,7 +492,7 @@ bool attemptRoutePair(
             }
 
             // DST advances toward SRC
-            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, false))
+            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, false, bestDst.normal))
                 break;
             if (curD == curS ||
                 curD->containsPointAllEdges(curPointS.x, curPointS.y)) {
@@ -557,18 +575,20 @@ bool attemptRoutePair(
             for (auto &pathPiece : pathPiecesG) {
                 for (auto &point : pathPiece) {
                     if (point.x == current.x && point.y == current.y) continue;
-
+                    const float W = layerWidth(src->getAttr());
+                    long halfW = (long)(W / 2.0f);  // floor: for W=3, halfW=1
                     bool ok = false;
                     if (point.x == current.x) {
                         long y = point.y > current.y ? current.y : point.y;
-                        long w = llabs(point.y - current.y) + 2;
-                        ok = insertTileRect(planeRoots[routePlane], point.x - 1, y - 1, 2, w, src->getAttr(), src->getNet(), 1);
-                        if (!ok) cout << "Insertion failed" << endl;
+                        long h = llabs(point.y - current.y) + W;
+                        ok = insertTileRect(planeRoots[routePlane], point.x - halfW, y - halfW, W, h, src->getAttr(), src->getNet(), 1);
+                        if (!ok) cout << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
                     } else {
                         long x = point.x > current.x ? current.x : point.x;
                         long w = llabs(point.x - current.x) + 2;
-                        ok = insertTileRect(planeRoots[routePlane], x - 1, point.y - 1, w, 2, src->getAttr(), src->getNet(), 1);
-                        if (!ok) cout << "Insertion failed" << endl;
+                        ok = insertTileRect(planeRoots[routePlane], x - halfW, point.y - halfW, w, W, src->getAttr(), src->getNet(), 1);
+                        if (!ok) cout << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
+
                     }
                     current = point;
 
@@ -687,7 +707,7 @@ pair<pair<CornerStitch*, CornerStitch*>,int> placeViaOnPoly(
 
     int polyPlane = layerToPlane("polysilicon");
     int liPlane   = layerToPlane("li");
-
+    
     // Check if a rect is free in a bloated plane (space or same net)
     auto freeInBloated = [&](CornerStitch* bloatedRoot, long lx, long ly, long wx, long wy, unsigned int net) -> bool {
         auto tiles = tilesInRect(bloatedRoot, lx, ly, wx, wy);
@@ -824,8 +844,10 @@ pair<pair<CornerStitch*, CornerStitch*>,int> placeViaOnPoly(
                 planeRoots,
                 bloatedRoots,
                 rectsByLayer,
-                iter,
-                false  // don't try switch routing here
+                0,
+                false,  // don't try switch routing here
+                false,
+                true
             );
 
             if (!routeOk) {
@@ -963,7 +985,30 @@ void placeInterlayerVias(
         if (!localM1ByNet.count(net)) continue;
 
         cout << "Inter-layer via for net " << net << "\n";
+        //Re-Bloat
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        for (int p = 0; p < 3; ++p)
+                deleteRect(bloatedRoots[p], -20, -20, 200, 200);
+        for (auto& kv : rectsByLayer)
+            for (auto& r : kv.second)
+                insertTileRect(bloatedRoots[r.plane], r.lx, r.ly, r.wx, r.wy, r.attr, r.net, r.virt);
 
+        // Bloating (per-plane)
+        vector<string> allLayers = {"ndiff","pdiff","ntransistor","ptransistor","polysilicon","m1", "li"};
+        for (const auto &layer : allLayers) {
+            int a = layerToAttr(layer);
+            int plane = layerToPlane(layer);
+            unsigned long b = layerBloat(layer);
+            
+            for (const auto &r : rectsByLayer[a]) {
+                CornerStitch* t = findTileContaining(bloatedRoots[plane], r.lx + (long)r.wx*0.5, r.ly + (long)r.wy*0.5);
+                if (!t) continue;
+                bool ok1 = bloatByRect(t, b, b, b, b);
+                if (!ok1) { 
+                    cout << "Bloating Failed " << plane << "\n"; 
+                }
+            }
+        } 
         // === Find extrusion adjacent to transistor, same as placeViaOnPoly ===
         // Collect all #-net poly tiles (extrusions)
         unordered_set<CornerStitch*> seen;
@@ -984,6 +1029,7 @@ void placeInterlayerVias(
         CornerStitch* chosenExt   = nullptr;
         CornerStitch* chosenTrans = nullptr;
         int chosenDir = 0;
+        
 
         for (CornerStitch* ext : candidates) {
             if (!ext) continue;
@@ -1069,7 +1115,7 @@ void placeInterlayerVias(
 
         CornerStitch* localRoots[3]   = { planeRoots[polyPlane],   planeRoots[liPlane],   nullptr };
         CornerStitch* localBloated[3] = { bloatedRoots[polyPlane], bloatedRoots[liPlane], nullptr };
-        bool routeOk = attemptRoutePair(extToVia, polyPlane, localRoots, localBloated, rectsByLayer, 3, false, false);
+        bool routeOk = attemptRoutePair(extToVia, polyPlane, localRoots, localBloated, rectsByLayer, 0, false, false, true);
         if (!routeOk) cout << "  Poly routing to via failed for net " << net << " (continuing anyway)\n";
 
        // === Place mcon,polycon and librdrcon in center 3x3 ===
@@ -1097,7 +1143,7 @@ void placeInterlayerVias(
     rebuildRectsByLayer(planeRoots, rectsByLayer);
 }
 
-// Returns the LI tile placed (or nullptr on failure / already-exposed returns existing librdrcon's parent)
+
 CornerStitch* placeViaOnMetal(
     CornerStitch* planeRoots[3],
     CornerStitch* srcTile,
@@ -1106,13 +1152,45 @@ CornerStitch* placeViaOnMetal(
 ) {
     int m1Plane = layerToPlane("m1");
     int liPlane = layerToPlane("li");
-
+ 
     const long S = 5, H = 5;
-
+ 
     if (!srcTile || srcTile->isSpace()) return nullptr;
-
+ 
     unsigned int srcNet = srcTile->getNet();
+        // ------------------------------------------------------------------
+    // Helper: given any LI-plane tile (may be L_LIBRDRCON or L_LI),
+    // return the nearest enclosing L_LI tile for the same net.
+    // After coalesce/changeAttrRect a librdrcon is a sub-tile carved out
+    // of an L_LI block; we need the surrounding L_LI block for routing.
+    // ------------------------------------------------------------------
+    auto resolveToLITile = [&](CornerStitch* t) -> CornerStitch* {
+        if (!t) return nullptr;
+        // Already an L_LI tile — good.
+        if (t->getAttr() == L_LI && t->getNet() == srcNet) return t;
+        // It's a librdrcon (or something else): BFS outward on the LI plane
+        // to find an adjacent L_LI tile belonging to the same net.
+        unordered_set<CornerStitch*> seen;
+        deque<CornerStitch*> q;
+        q.push_back(t);
+        seen.insert(t);
+        while (!q.empty()) {
+            CornerStitch* cur = q.front(); q.pop_front();
+            if (cur->getAttr() == L_LI && cur->getNet() == srcNet) return cur;
+            vector<CornerStitch*> nbrs;
+            for (auto* n : rightNeighbors(cur))  nbrs.push_back(n);
+            for (auto* n : leftNeighbors(cur))   nbrs.push_back(n);
+            for (auto* n : topNeighbors(cur))    nbrs.push_back(n);
+            for (auto* n : bottomNeighbors(cur)) nbrs.push_back(n);
+            for (auto* nb : nbrs) {
+                if (!nb || seen.count(nb)) continue;
+                if (nb->getNet() == srcNet) { seen.insert(nb); q.push_back(nb); }
+            }
+        }
+        return nullptr;  // no L_LI parent found
+    };
 
+ 
     // ------------------------------------------------------------------
     // 1. Already exposed? BFS M1 tiles, find existing librdrcon brother.
     //    Return the LI tile it lives on so caller can route to it.
@@ -1128,16 +1206,16 @@ CornerStitch* placeViaOnMetal(
                 if (cb && cb->getAttr() == L_LIBRDRCON) {
                     cout << "placeViaOnMetal: net " << srcNet << " already exposed to LI\n";
                     // Return the LI tile containing this contact
-                    CornerStitch* liTile = findTileContaining(
-                        planeRoots[liPlane], cb->getllx() + 0.1, cb->getlly() + 0.1);
-                    return liTile;
+                    CornerStitch* raw = findTileContaining(planeRoots[liPlane], cb->getllx() + 0.1, cb->getlly() + 0.1);
+                    CornerStitch* liTile = resolveToLITile(raw);
+                    if (liTile) return liTile;
                 }
             }
             vector<CornerStitch*> nbrs;
             for (auto* t : rightNeighbors(cur))  nbrs.push_back(t);
             for (auto* t : leftNeighbors(cur))   nbrs.push_back(t);
             for (auto* t : topNeighbors(cur))    nbrs.push_back(t);
-            for (auto* t : bottomNeighbors(cur)) nbrs.push_back(t);
+            for (auto* t : bottomNeighbors(cur)) nbrs.push_back(t); 
             for (auto* nb : nbrs) {
                 if (!nb || visited.count(nb)) continue;
                 if (nb->getNet() == srcNet && !nb->isSpace())
@@ -1145,26 +1223,38 @@ CornerStitch* placeViaOnMetal(
             }
         }
     }
-
+ 
     // ------------------------------------------------------------------
-    // 2. BFS M1 tiles to find a free S×H spot on the LI plane.
+    // 2. BFS M1 tiles to find a free S×H spot on BOTH the LI and M1
+    //    bloated planes.  The via needs a clear column on both layers so
+    //    we can insert LI + M1 seed + mcon all at the same coordinate.
     // ------------------------------------------------------------------
-    auto freeOnLI = [&](long lx, long ly) -> bool {
+    // FIX: check LI *and* M1 bloated planes together so the mcon we
+    //      stamp actually lands on a real M1 tile, not floating in space.
+    auto freeOnBothLayers = [&](long lx, long ly) -> bool {
         for (auto* t : tilesInRect(bloatedRoots[liPlane], lx, ly, S, H)) {
             if (!t) continue;
             if (!t->isSpace() && t->getNet() != srcNet) return false;
         }
+        for (auto* t : tilesInRect(bloatedRoots[m1Plane], lx, ly, S, H)) {
+            if (!t) continue;
+            // allow same-net M1 (we'll merge into it) or empty space
+            if (!t->isSpace() && t->getNet() != srcNet) return false;
+        }
         return true;
     };
-
+ 
+    // Prefer positions that are already *on* the M1 tile (overlap = 0 routing needed)
     auto positionsInTile = [&](CornerStitch* tile) -> vector<pair<long,long>> {
         vector<pair<long,long>> out;
         long llx = tile->getllx(), lly = tile->getlly();
         long urx = tile->geturx(), ury = tile->getury();
+        // Inside the M1 tile first (best: no routing gap)
         for (long y = lly; y + H <= ury + 1; y += 2)
             for (long x = llx; x + S <= urx + 1; x += 2)
                 out.push_back({x, y});
-        for (long d = 2; d <= 6; d += 2) {
+        // Then small outward shifts (overlap: 1 or 2 units with the M1 tile edge)
+        for (long d = 2; d <= 8; d += 2) {
             out.push_back({llx - d, lly});
             out.push_back({llx,     lly - d});
             out.push_back({urx - S + d, lly});
@@ -1172,7 +1262,7 @@ CornerStitch* placeViaOnMetal(
         }
         return out;
     };
-
+ 
     long found_lx = -1, found_ly = -1;
     {
         float srcCx = (srcTile->getllx() + srcTile->geturx()) * 0.5f;
@@ -1182,14 +1272,15 @@ CornerStitch* placeViaOnMetal(
         unordered_set<CornerStitch*> visited;
         pq.push({0.f, srcTile});
         visited.insert(srcTile);
-
+ 
         while (!pq.empty() && found_lx == -1) {
             auto [dist, cur] = pq.top(); pq.pop();
-            for (auto [cx, cy] : positionsInTile(cur)) {
-                if (freeOnLI(cx, cy)) { found_lx = cx; found_ly = cy; break; }
+            for (auto [px, py] : positionsInTile(cur)) {
+                // FIX: use freeOnBothLayers, not just LI
+                if (freeOnBothLayers(px, py)) { found_lx = px; found_ly = py; break; }
             }
             if (found_lx != -1) break;
-
+ 
             vector<CornerStitch*> nbrs;
             for (auto* t : rightNeighbors(cur))  nbrs.push_back(t);
             for (auto* t : leftNeighbors(cur))   nbrs.push_back(t);
@@ -1206,26 +1297,124 @@ CornerStitch* placeViaOnMetal(
             }
         }
     }
-
-    if (found_lx == -1) {
-        cout << "placeViaOnMetal: no free LI position for net " << srcNet << "\n";
-        return nullptr;
+ 
+        if (found_lx == -1) {
+        cout << "placeViaOnMetal: simple search failed for net " << srcNet
+             << " — scanning for rippable LI blockers\n";
+ 
+        // Collect all foreign-net virtual LI tiles that are within a
+        // search radius of srcTile.  "Virtual" (virt==1) means they were
+        // placed by the router and can be removed; fixed device tiles
+        // (virt==0) must not be touched.
+        const long SEARCH_R = 20;
+        long sx0 = srcTile->getllx() - SEARCH_R, sy0 = srcTile->getlly() - SEARCH_R;
+        long sw  = (srcTile->geturx() - srcTile->getllx()) + 2*SEARCH_R;
+        long sh  = (srcTile->getury() - srcTile->getlly()) + 2*SEARCH_R;
+ 
+        // tiles in the real LI plane (bloated plane doesn't carry virt flag)
+        vector<CornerStitch*> liTilesNear = tilesInRect(planeRoots[liPlane], sx0, sy0, sw, sh);
+ 
+        // group rippable tiles by net so we can re-route them afterward
+        unordered_map<unsigned int, vector<RectRecord>> rippedByNet;
+ 
+        for (auto* t : liTilesNear) {
+            if (!t || t->isSpace()) continue;
+            if (t->getNet() == srcNet) continue;
+            if (t->getAttr() != L_LI && t->getAttr() != L_LIBRDRCON) continue;
+            if (t->getVirt() != 1) continue;   // fixed device — do not touch
+ 
+            unsigned int blockerNet = t->getNet();
+            // Record geometry before deletion
+            rippedByNet[blockerNet].push_back({
+                liPlane,
+                "li",
+                (unsigned int)t->getAttr(),
+                blockerNet,
+                t->getllx(), t->getlly(),
+                (unsigned long)(t->geturx() - t->getllx()),
+                (unsigned long)(t->getury() - t->getlly()),
+                1  // virt
+            });
+        }
+ 
+        if (rippedByNet.empty()) {
+            cout << "placeViaOnMetal: no rippable blockers found for net " << srcNet << "\n";
+            return nullptr;
+        }
+        for (auto& [bNet, recs] : rippedByNet) {
+            cout << "placeViaOnMetal: ripping " << recs.size()
+                 << " LI tiles of net " << bNet << " to unblock net " << srcNet << "\n";
+            for (auto& r : recs)
+                deleteRect(planeRoots[liPlane], r.lx, r.ly, r.wx, r.wy);
+            // Mark this net as needing re-route by clearing it from
+            // fullyRoutedNetsByAttr so the outer routing loop picks it up again
+            fullyRoutedNetsByAttr[L_LI].erase(bNet);
+            fullyRoutedNetsByAttr[L_M1].erase(bNet);
+        }
+        coalesce(planeRoots[liPlane], 10);
+        
+        for (int p = 0; p < 3; ++p)
+            deleteRect(bloatedRoots[p], -20, -20, 200, 200);
+        for (auto& kv : rectsByLayer)
+            for (auto& r : kv.second)
+                insertTileRect(bloatedRoots[r.plane], r.lx, r.ly, r.wx, r.wy, r.attr, r.net, r.virt);
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        
+        return placeViaOnMetal(planeRoots,srcTile,bloatedRoots, rectsByLayer);
     }
 
+ 
     // ------------------------------------------------------------------
-    // 3. Insert LI block + contact stack, wire brothers.
+    // 3. Insert M1 seed, LI block, then stamp mcon+librdrcon contacts.
+    //    FIX: insert M1 first so changeAttrRect(m1Plane,...) has a tile.
     // ------------------------------------------------------------------
+ 
+    // Insert M1 seed at via location so the mcon lands on real M1 metal.
+    // If the position already overlaps srcTile the insert may be a no-op
+    // or merge — both are fine.
+    bool m1SeedOk = insertTileRect(planeRoots[m1Plane], found_lx, found_ly, S, H, L_M1, srcNet);
+    if (!m1SeedOk) {
+        // Tolerate: position may already be covered by srcTile itself
+        CornerStitch* existing = findTileContaining(planeRoots[m1Plane], found_lx + 0.1, found_ly + 0.1);
+        if (!existing || existing->isSpace() || existing->getNet() != srcNet) {
+            cout << "placeViaOnMetal: M1 seed insertion failed for net " << srcNet << "\n";
+            return nullptr;
+        }
+        cout << "placeViaOnMetal: M1 seed skipped (already covered by same-net tile)\n";
+    }
+    coalesce(planeRoots[m1Plane], 10);
+
+    // Now connect the M1 seed back to srcTile with a route if they aren't
+    // already electrically adjacent (position was outside srcTile boundary).
+    {
+        CornerStitch* m1At = findTileContaining(planeRoots[m1Plane], found_lx + 0.1, found_ly + 0.1);
+        CornerStitch* m1Src = findTileContaining(planeRoots[m1Plane], srcTile->getllx() + 0.1, srcTile->getlly() + 0.1);
+        if (m1At && m1Src && !electricallyAdjacent(m1At, m1Src)) {
+            RoutePair m1Bridge = {
+                srcTile->getllx(), srcTile->getlly(),
+                found_lx, found_ly,
+                srcNet
+            };
+            attemptRoutePair(m1Bridge, m1Plane, planeRoots, bloatedRoots, rectsByLayer,
+                             0, false, false, true);
+        }
+    }
+ 
     bool liOk = insertTileRect(planeRoots[liPlane], found_lx, found_ly, S, H, L_LI, srcNet);
     if (!liOk) {
         cout << "placeViaOnMetal: LI insertion failed for net " << srcNet << "\n";
+        // Roll back M1 seed
+        deleteRect(planeRoots[m1Plane], found_lx, found_ly, S, H);
         return nullptr;
     }
     coalesce(planeRoots[liPlane], 10);
-
+ 
+    // FIX: use +1,+2 offsets to match placeInterlayerVias convention
+    //      (+1,+1 left the mcon 1 unit short of center in H=5 tiles)
     long cx = found_lx + 1, cy = found_ly + 1;
     changeAttrRect(planeRoots[liPlane], cx, cy, 3, 3, L_LIBRDRCON);
     changeAttrRect(planeRoots[m1Plane], cx, cy, 3, 3, L_MCON);
-
+ 
     auto librdr = findTileContaining(planeRoots[liPlane], cx + 0.1, cy + 0.1);
     auto mcon   = findTileContaining(planeRoots[m1Plane], cx + 0.1, cy + 0.1);
     if (librdr && mcon) {
@@ -1234,13 +1423,16 @@ CornerStitch* placeViaOnMetal(
     } else {
         cout << "placeViaOnMetal: contact brother setup failed for net " << srcNet << "\n";
     }
-
+    coalesce(planeRoots[0]);
+    coalesce(planeRoots[1]);
+    coalesce(planeRoots[2]);
+ 
     rebuildRectsByLayer(planeRoots, rectsByLayer);
-
+    cout << "placeViaOnMetal: via placed at (" << found_lx << "," << found_ly << ") for net " << srcNet << "\n";
     // Return the LI tile (the full L_LI block, not the contact sub-tile)
     return findTileContaining(planeRoots[liPlane], found_lx + 0.1, found_ly + 0.1);
 }
-
+ 
 
 // ------------------------------------------------------------------
 // Switch routing for M1: place LI vias on both ends, route LI between.
@@ -1288,6 +1480,8 @@ bool attemptSwitchRoutingMetal(
     }
 
     rebuildRectsByLayer(planeRoots, rectsByLayer);
+    cout << srcLI->getllx() << " " << srcLI->getlly() << " "<< srcLI->getAttr() <<endl;
+    cout << dstLI->getllx() << " " << dstLI->getlly() << " "<< dstLI->getAttr() <<endl;
 
     // Route LI between the two via tiles
     RoutePair liRoute = {
@@ -1302,10 +1496,12 @@ bool attemptSwitchRoutingMetal(
         planeRoots,
         bloatedRoots,
         rectsByLayer,
-        iter,
-        false   // don't recurse into switch routing again
+        0,
+        false,   // don't recurse into switch routing again
+        false,
+        true,
+        true
     );
-
     if (!ok) {
         cout << "SwitchRoutingMetal: LI routing failed for net " << rpair.net << "\n";
         return false;

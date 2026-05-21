@@ -95,11 +95,16 @@ unsigned int layerToAttr(const string& layer) {
 unsigned long layerBloat(const string& layer) {
     if (layer == "ndiff" || layer == "pdiff" || layer == "ndiffusion" || layer == "pdiffusion") return 2;
     if (layer == "ntransistor" || layer == "ptransistor") return 0;
-    if (layer == "polysilicon") return 4;
+    if (layer == "polysilicon") return 3;
     if (layer == "li") return 5;
     if (layer == "m1") return 3;
     if (layer == "m2") return 0;
     return 0;
+}
+
+long layerWidth(unsigned int attr) {
+    if (attr == L_LI) return 3;
+    return 2;
 }
 
 struct RectRecord {
@@ -268,6 +273,84 @@ vector<Port> getPorts(
     }
     for(auto port : ports) if(port.normal<0 || port.normal > 3) cout << LEFT;
     return ports;
+}
+
+vector<Port> getPortsForNet(
+    CornerStitch* seedTile,
+    CornerStitch* bloatedRoot,
+    bool useExtraPorts
+) {
+    if (!seedTile) return {};
+
+    unordered_set<CornerStitch*> visited;
+    deque<CornerStitch*> q;
+    vector<Port> ports;
+
+    q.push_back(seedTile);
+    visited.insert(seedTile);
+
+    while (!q.empty()) {
+        CornerStitch* cur = q.front();
+        q.pop_front();
+
+        auto tilePorts = getPorts(cur, bloatedRoot, useExtraPorts);
+        ports.insert(ports.end(), tilePorts.begin(), tilePorts.end());
+
+        vector<vector<CornerStitch*>> neighborGroups = {
+            rightNeighbors(cur),
+            topNeighbors(cur),
+            leftNeighbors(cur),
+            bottomNeighbors(cur)
+        };
+
+        for (auto& group : neighborGroups) {
+            for (auto* nb : group) {
+                if (!nb) continue;
+                if (visited.count(nb)) continue;
+                if (electricallyAdjacent(cur, nb)) {
+                    visited.insert(nb);
+                    q.push_back(nb);
+                }
+            }
+        }
+    }
+
+    // --- Collapse ports on the same line into one center port ---
+    // LEFT/RIGHT ports share the same x → group by (x, normal)
+    // UP/DOWN   ports share the same y → group by (y, normal)
+
+    // Key: (coord, normal) where coord = x for LEFT/RIGHT, y for UP/DOWN
+    map<pair<long,int>, vector<Port*>> lineGroups;
+    for (auto& p : ports) {
+        long key_coord = (p.normal == LEFT || p.normal == RIGHT) ? p.x : p.y;
+        lineGroups[{key_coord, p.normal}].push_back(&p);
+    }
+
+    vector<Port> result;
+    for (auto& [key, group] : lineGroups) {
+        if (group.size() == 1) {
+            result.push_back(*group[0]);
+        } else {
+            // Compute center along the perpendicular axis
+            if (group[0]->normal == LEFT || group[0]->normal == RIGHT) {
+                // Same x, varying y → center y
+                long minY = LONG_MAX, maxY = LONG_MIN;
+                for (auto* p : group) { minY = min(minY, p->y); maxY = max(maxY, p->y); }
+                Port center = *group[0];
+                center.y = (minY + maxY) / 2;
+                result.push_back(center);
+            } else {
+                // Same y, varying x → center x
+                long minX = LONG_MAX, maxX = LONG_MIN;
+                for (auto* p : group) { minX = min(minX, p->x); maxX = max(maxX, p->x); }
+                Port center = *group[0];
+                center.x = (minX + maxX) / 2;
+                result.push_back(center);
+            }
+        }
+    }
+
+    return result;
 }
 
 bool inferPreferHorizontal(const vector<vector<Point>>& pathPieces, bool defaultDir)
@@ -502,4 +585,3 @@ bool placeContactSquare(
     coalesce(squareRoot, 10);
     return true;
 }
-
