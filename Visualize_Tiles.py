@@ -1,13 +1,31 @@
+# ---------- USAGE ----------
+# Run without an argument:
+#   python plot.py
+#   -> saves the output as "layout.pdf" in the current directory
+#
+# Run with an output name:
+#   python plot.py <name>
+#   -> saves the output as "Visuals/<name>.pdf"
+#
+# Example:
+#   python plot.py routed_layout
+#   -> Visuals/routed_layout.pdf
+#
+# The "Visuals" directory is created automatically if it does not exist.
+# ----------------------------------------------------------------------
+
 import ast
 from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.patches import Patch
+import sys
+import os
 
 # ---------- CONFIG ----------
 plane_files = [
-    ("plane0_routed.sam", 0),
-    ("plane1_routed.sam", 1),
-    ("plane2_routed.sam", 2)
+    ("SAM_Files/plane0_routed.sam", 0),
+    ("SAM_Files/plane1_routed.sam", 1),
+    ("SAM_Files/plane2_routed.sam", 2)
 ]
 
 Tile_boundaries = False
@@ -114,7 +132,7 @@ ax.set_aspect("equal", adjustable="box")
 ax.set_xlabel("x")
 ax.set_ylabel("y")
 ax.set_title("Corner Stitch Layout (3 planes)")
-ax.grid(True, linestyle=":", linewidth=0.5)
+# ax.grid(True, linestyle=":", linewidth=0.5)
 
 if Zoom_to_fit: 
     valid_tiles = [
@@ -179,11 +197,20 @@ if Legend:
         frameon=True
     )
 
+# ---------- SAVE PDF ----------
+if len(sys.argv) > 1:
+    output_name = sys.argv[1]
+    output_path = os.path.join("Visuals", output_name + ".pdf")
+    os.makedirs("Visuals", exist_ok=True)
+else:
+    output_path = "layout.pdf"
+
 plt.savefig(
-    "layout.pdf",
+    output_path,
     bbox_inches="tight",
     facecolor="white",
     format="pdf"
 )
-plt.show()
+
+#plt.show()
 
