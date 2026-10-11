@@ -138,7 +138,7 @@ vector<RoutePair> generateRoutePairs(
                 });
                 int idx = 0;
                 idx = min((int)Candidates.size() - 1, iter - 3); 
-                cout << "ig I should try a new route pair, trying idx: " << idx << "\n";
+                DBG(D_PAIRS) << "ig I should try a new route pair, trying idx: " << idx << "\n";
                 bestSrc = Candidates[idx].s;
                 bestDst = Candidates[idx].d;
             }
@@ -159,7 +159,28 @@ vector<RoutePair> generateRoutePairs(
     return routePairs;
 }
 
-//int x=0, z=0;
+// The first move out of a port: a straight stub of P = ceil(W/2) so the first bend is at least half a
+// width off the tile edge. Gives the stub's tip, and false if foreign bloat or an obstacle is in front
+// of the port (no room to leave). Depends only on the port, the bloated plane and the net.
+inline bool portPushOut(const Port& port, CornerStitch* bloatedRoot, CornerStitch* src, Point& tip, long& P) {
+    long W = routeWidth(src->getAttr()), lo = W / 2, hi = W - lo;
+    P = (W + 1) / 2;
+    long rx, ry; unsigned long rw, rh; tip = {port.x, port.y};
+    switch (port.normal) {          // region IN FRONT of the port that the wire will occupy
+        case RIGHT: tip.x += P; rx = port.x;          ry = port.y - lo;     rw = P + hi; rh = W;      break;
+        case LEFT:  tip.x -= P; rx = port.x - P - lo; ry = port.y - lo;     rw = P + lo; rh = W;      break;
+        case UP:    tip.y += P; rx = port.x - lo;     ry = port.y;          rw = W;      rh = P + hi; break;
+        case DOWN:  tip.y -= P; rx = port.x - lo;     ry = port.y - P - lo; rw = W;      rh = P + lo; break;
+        default: return false;
+    }
+    for (auto* t : tilesInRect(bloatedRoot, rx, ry, rw, rh)) {
+        if (!t) return false;
+        bool isContact = (t->getAttr() == L_POLYCON || t->getAttr() == L_LIBRDRCON || t->getAttr() == L_MCON);
+        bool own = (t->getNet() == src->getNet() && (t->getAttr() == src->getAttr() || isContact));
+        if (!t->isSpace() && !own) return false;            // foreign bloat/obstacle in the way
+    }
+    return true;
+}
 
 // attemptRoutePair: route a single RoutePair on the specified plane only
 // Default values of some args given in function decalration in Switch_Routing.hpp
@@ -180,7 +201,7 @@ bool attemptRoutePair(
     CornerStitch* dst = findTileContaining(planeRoots[routePlane], rpair.dst_x, rpair.dst_y);
     if (!src || !dst) return false;
     if (electricallyAdjacent(src, dst)) {
-        cout << "Not routing Electrically Adjacent Tiles\n";
+        DBG(D_CONN) << "Not routing Electrically Adjacent Tiles\n";
         return false;
     }
     // Reset bloated roots and re-insert all rects
@@ -221,7 +242,7 @@ bool attemptRoutePair(
             }
             bool ok1 = bloatByRect(t, b, b, b, b);
             if (!ok1) { 
-                cout << "Bloating Failed " << plane << "\n"; 
+                DBG(D_SEARCH) << "Bloating Failed " << plane << "\n"; 
             }
         }
     }
@@ -235,16 +256,21 @@ bool attemptRoutePair(
         srcPorts = getPortsForNet(src, bloatedRoots[routePlane], useExtraPorts);
         dstPorts = getPortsForNet(dst, bloatedRoots[routePlane], useExtraPorts);
     }
-    cout << "\n=== SRC PORTS === (plane " << routePlane << ")\n";
+    DBG(D_PORTS) << "\n=== SRC PORTS === (plane " << routePlane << ")\n";
     for (size_t i = 0; i < srcPorts.size(); ++i) {
-        cout << "S" << i << ": (" << srcPorts[i].x << "," << srcPorts[i].y <<")" << " , Normal: " << srcPorts[i].normal<<"\n";
+        DBG(D_PORTS) << "S" << i << ": (" << srcPorts[i].x << "," << srcPorts[i].y <<")" << " , Normal: " << srcPorts[i].normal<<"\n";
     }
-    cout << "\n=== DST PORTS === (plane " << routePlane << ")\n";
+    DBG(D_PORTS) << "\n=== DST PORTS === (plane " << routePlane << ")\n";
     for (size_t i = 0; i < dstPorts.size(); ++i) {
-        cout << "D" << i << ": (" << dstPorts[i].x << "," << dstPorts[i].y << ")" << " , Normal: " << dstPorts[i].normal<<"\n";
+        DBG(D_PORTS) << "D" << i << ": (" << dstPorts[i].x << "," << dstPorts[i].y << ")" << " , Normal: " << dstPorts[i].normal<<"\n";
     }
 
     if (srcPorts.empty() || dstPorts.empty()) return false;
+    // Drop ports with no room to leave, once, instead of finding that out pair by pair in the loop below.
+    // (No early return if nothing is left: the loop must still reach the metal-switch fallback.)
+    auto noRoom = [&](const Port& p) { Point tip; long P; return !portPushOut(p, bloatedRoots[routePlane], src, tip, P); };
+    srcPorts.erase(remove_if(srcPorts.begin(), srcPorts.end(), noRoom), srcPorts.end());
+    dstPorts.erase(remove_if(dstPorts.begin(), dstPorts.end(), noRoom), dstPorts.end());
 
     // Ports whose search front ran out of room: remember every tile it could reach.
     // Any port pair whose other end lies outside that region cannot succeed, so skip it.
@@ -260,7 +286,10 @@ bool attemptRoutePair(
         for (auto s : srcPorts) {
             for (auto d : dstPorts) {
                 if (count(failedRoutes.begin(), failedRoutes.end(), make_pair(s, d)) > 0) continue;
-                long cost = llabs(s.x - d.x) + llabs(s.y - d.y);
+                // a port facing away must U-turn: about two wire widths plus spacing
+                const long PEN = 2 * ((long)routeWidth(src->getAttr()) + (long)layerBloat(attrToLayerName(src->getAttr())));
+                const long BONUS = 2;   // small reward for a port that points at the other end
+                long cost = llabs(s.x - d.x) + llabs(s.y - d.y) + facingCost(s, d, PEN, BONUS) + facingCost(d, s, PEN, BONUS);
                 if (cost < bestCost) {
                     bestCost = cost;
                     bestSrc = s;
@@ -439,23 +468,8 @@ bool attemptRoutePair(
                             CornerStitch*& cur, Point& curPoint,
                             vector<vector<Point>>& pieces, vector<unsigned long>& costs,
                             vector<CornerStitch*>& tiles, vector<CornerStitch*>& visited) -> bool{
-            long W = routeWidth(src->getAttr()), lo = W / 2, hi = W - lo;
-            long P = (W + 1) / 2;       // ceil(W/2)
-
-            long rx, ry; unsigned long rw, rh; Point tip = {port.x, port.y};
-            switch (port.normal) {          // region IN FRONT of the port that the wire will occupy
-                case RIGHT: tip.x += P; rx = port.x;         ry = port.y - lo;     rw = P + hi; rh = W;      break;
-                case LEFT:  tip.x -= P; rx = port.x - P - lo; ry = port.y - lo;     rw = P + lo; rh = W;      break;
-                case UP:    tip.y += P; rx = port.x - lo;     ry = port.y;          rw = W;      rh = P + hi; break;
-                case DOWN:  tip.y -= P; rx = port.x - lo;     ry = port.y - P - lo; rw = W;      rh = P + lo; break;
-                default: return false;
-            }
-            for (auto* t : tilesInRect(bloatedRoot, rx, ry, rw, rh)) {
-                if (!t) return false;
-                bool isContact = (t->getAttr() == L_POLYCON || t->getAttr() == L_LIBRDRCON || t->getAttr() == L_MCON);
-                bool own = (t->getNet() == src->getNet() && (t->getAttr() == src->getAttr() || isContact));
-                if (!t->isSpace() && !own) return false;            // foreign bloat/obstacle in the way
-            }
+            Point tip; long P;
+            if (!portPushOut(port, bloatedRoot, src, tip, P)) return false;
             pieces.push_back({curPoint, tip});
             costs.push_back(P);
             tiles.push_back(cur);       // keep tiles/pieces in step, like advanceOneStep
@@ -539,14 +553,14 @@ bool attemptRoutePair(
                 excessive_m = false;
             }
             if (excessive && try_switch && routePlane == 0) {
-                cout << "Route found but cost " << totalCost << " >> ideal " << ideal
+                DBG(D_SEARCH) << "Route found but cost " << totalCost << " >> ideal " << ideal
                     << " ; shoudld do switch routing for net " << rpair.net << "\n";
                 bool ok = attemptSwitchRouting(rpair, iter, 0, planeRoots, bloatedRoots, rectsByLayer);
                 if (ok) return true;
 
             }
             if (excessive_m && try_switch && routePlane == 2) {
-                cout << "Route found but cost " << totalCost << " >> ideal " << ideal
+                DBG(D_SEARCH) << "Route found but cost " << totalCost << " >> ideal " << ideal
                     << " ; shoudld do switch routing for net " << rpair.net << "\n";
                 bool ok = attemptSwitchRouting(rpair, iter, 2, planeRoots, bloatedRoots, rectsByLayer);
                 if (ok) return true;
@@ -557,13 +571,17 @@ bool attemptRoutePair(
             CornerStitch* realDst = findTileContaining(planeRoots[routePlane], rpair.dst_x, rpair.dst_y);
 
             Point current = {bestSrc.x, bestSrc.y};
-            cout << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
+            // statistics for the run summary
+            long len, nb; pathStats(pathPiecesG, len, nb);
+            runStats.length[routePlane] += len; runStats.bends[routePlane] += nb; runStats.routes[routePlane]++;
+
+            DBG(D_SEARCH) << bestSrc.x << "," << bestSrc.y << " " << bestDst.x << "," << bestDst.y << " : Routed \n";
             for (size_t i = 0; i < pathPiecesG.size(); i++) {
-                cout << "PathPiece " << i << ": ";
+                DBG(D_SEARCH) << "PathPiece " << i << ": ";
                 for (size_t j = 0; j < pathPiecesG[i].size(); j++) {
-                    cout << "(" << pathPiecesG[i][j].x << ", " << pathPiecesG[i][j].y << ") ";
+                    DBG(D_SEARCH) << "(" << pathPiecesG[i][j].x << ", " << pathPiecesG[i][j].y << ") ";
                 }
-                cout << endl;
+                DBG(D_SEARCH) << endl;
             }
 
             for (auto &pathPiece : pathPiecesG) {
@@ -576,21 +594,21 @@ bool attemptRoutePair(
                         long y = point.y > current.y ? current.y : point.y;
                         long h = llabs(point.y - current.y) + W;
                         ok = insertTileRect(planeRoots[routePlane], point.x - halfW, y - halfW, W, h, src->getAttr(), src->getNet(), 1);
-                        if (!ok) cout << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
+                        if (!ok) DBG(D_SEARCH) << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
                     } else {
                         long x = point.x > current.x ? current.x : point.x;
                         long w = llabs(point.x - current.x) + 2;
                         ok = insertTileRect(planeRoots[routePlane], x - halfW, point.y - halfW, w, W, src->getAttr(), src->getNet(), 1);
-                        if (!ok) cout << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
+                        if (!ok) DBG(D_SEARCH) << "Insertion failed" << " attr: " << src->getAttr() <<  endl;
 
                     }
                     current = point;
 
-                    // Re-resolve on real plane after each insertion (tiles may have merged via coalesce)
+                    // // Re-resolve on real plane after each insertion (tiles may have merged via coalesce)
                     realSrc = findTileContaining(planeRoots[routePlane], rpair.src_x, rpair.src_y);
                     realDst = findTileContaining(planeRoots[routePlane], rpair.dst_x, rpair.dst_y);
                     if (ok && realSrc && realDst && electricallyAdjacent(realSrc, realDst)) {
-                        cout << "Elec - genuinely connected on real plane\n";
+                        DBG(D_CONN) << "Elec - genuinely connected on real plane\n";
                         return true;
                     }
                 }
@@ -598,23 +616,24 @@ bool attemptRoutePair(
             return true;
         } 
         else {
+            if (deadFront) runStats.deadFronts++;
             if (deadFront == 1) deadSrcRegions.push_back({bestSrc, unordered_set<CornerStitch*>(visitedTilesS.begin(), visitedTilesS.end())});
             if (deadFront == 2) deadDstRegions.push_back({bestDst, unordered_set<CornerStitch*>(visitedTilesD.begin(), visitedTilesD.end())});
             failedRoutes.push_back(make_pair(bestSrc, bestDst));
-            cout << "Routing between " << bestSrc.x << "," << bestSrc.y << " and "
+            DBG(D_SEARCH) << "Routing between " << bestSrc.x << "," << bestSrc.y << " and "
                  << bestDst.x << "," << bestDst.y << " : fail\n";
         }
     }
     if (!routed && noRoute) {
         // All port pairs failed - net is trapped!
         if (try_switch && routePlane == 1) {  // For M1 plane
-            cout << "All routes failed for net " << rpair.net 
+            DBG(D_SEARCH) << "All routes failed for net " << rpair.net 
                 << " on M1 - attempting switch to LI\n";
             // if (ok) return true;
         }
     }
     if (!routed && bloat_src) {
-        cout << "Retrying with bloat_src=false for net " << rpair.net << "\n";
+        DBG(D_SEARCH) << "Retrying with bloat_src=false for net " << rpair.net << "\n";
         return attemptRoutePair(rpair, routePlane, planeRoots, bloatedRoots, rectsByLayer, iter, try_switch, false, advance_routepair, attemptedMetalSwitch);
     }
     return false;
@@ -646,7 +665,7 @@ void routeLayer(
         unsigned int net = kv.first;
         if (net == getNetId("#")) continue;
         if (WholeNetElectricallyConnected(kv.second)) { 
-            cout << "Net: " << net << " fully routed on attr " << layerAttr << "\n";
+            DBG(D_SUMMARY) << "Net: " << net << " fully routed on attr " << layerAttr << "\n";
             fullyRoutedNetsByAttr[layerAttr].insert(net);
             toErase[kv.second[0]->getAttr()].push_back(net);
         }

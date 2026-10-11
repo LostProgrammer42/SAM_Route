@@ -106,7 +106,7 @@ vector<Port> getPorts(
                 ports.push_back({x, ry, UP});
         }
     }
-    for(auto port : ports) if(port.normal<0 || port.normal > 3) cout << LEFT;
+    for(auto port : ports) if(port.normal<0 || port.normal > 3) DBG(D_PORTS) << LEFT;
     return ports;
 }
 
@@ -186,6 +186,35 @@ vector<Port> getPortsForNet(
     }
 
     return result;
+}
+
+// Length and number of bends of a route given as path pieces (consecutive points are joined).
+inline void pathStats(const vector<vector<Point>>& pieces, long& len, long& bends) {
+    vector<Point> pts;
+    for (auto& pc : pieces)
+        for (auto& p : pc)
+            if (pts.empty() || !(pts.back() == p)) pts.push_back(p);
+    len = 0; bends = 0;
+    int prev = -1;                                   // 0 = horizontal, 1 = vertical
+    for (size_t i = 1; i < pts.size(); ++i) {
+        long dx = pts[i].x - pts[i-1].x, dy = pts[i].y - pts[i-1].y;
+        len += llabs(dx) + llabs(dy);
+        int d = (dy == 0) ? 0 : 1;
+        if (prev != -1 && d != prev) ++bends;
+        prev = d;
+    }
+}
+
+// How good is it to leave port p when the wire has to reach q?
+//   facing q   : the port points toward q     -> small bonus (negative cost)
+//   away from q: the port points away from q  -> penalty (the wire has to U-turn)
+//   otherwise (sideways, or q is level with p) -> 0
+inline long facingCost(const Port& p, const Port& q, long awayPen, long towardBonus) {
+    bool toward = (p.normal == LEFT  && q.x < p.x) || (p.normal == RIGHT && q.x > p.x) ||
+                  (p.normal == UP    && q.y > p.y) || (p.normal == DOWN  && q.y < p.y);
+    bool away   = (p.normal == LEFT  && q.x > p.x) || (p.normal == RIGHT && q.x < p.x) ||
+                  (p.normal == UP    && q.y < p.y) || (p.normal == DOWN  && q.y > p.y);
+    return away ? awayPen : (toward ? -towardBonus : 0);
 }
 
 bool inferPreferHorizontal(const vector<vector<Point>>& pieces, bool defaultDir) {

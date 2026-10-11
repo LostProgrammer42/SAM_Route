@@ -779,7 +779,7 @@ bool changeAttrRect(CornerStitch* &anchor, long lx, long ly, unsigned long wx, u
     // Then split vertical edges along x = lx and x = rx for full vertical span [ly, ry)
     if (!splitVerticalEdge(anchor, lx, ly+0.1, ly+(long)wy-0.1)) return false;
     if (!splitVerticalEdge(anchor, lx+(long)wx, ly+0.1, ly+(long)wy-0.1)) return false;
-    cout << "lx: " << lx << " ly: " << ly << " wx: " << wx << " wy: " << wy << endl;
+    DBG(D_PLANES) << "lx: " << lx << " ly: " << ly << " wx: " << wx << " wy: " << wy << endl;
     auto list = tilesInRect(anchor, lx, ly, wx, wy);
     if (list.empty()) return false;
     for (auto tt : list) {
@@ -928,7 +928,3 @@ bool moveTile(
 
     return true;
 }
-
-
-
-

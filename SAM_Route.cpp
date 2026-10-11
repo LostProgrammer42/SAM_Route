@@ -9,6 +9,7 @@ using namespace std;
 unordered_map<unsigned int, vector<CornerStitch*>> polysByNet, metalsByNet, lisByNet, substrateByNet;
 
 int main(int argc, char** argv) {
+    initDebug();
     if (argc < 2) {
         cerr << "Usage: ./Route <file.rect> [layer1,layer2,...]\n";
         cerr << "Example: ./Route input.rect polysilicon,m1\n";
@@ -28,11 +29,11 @@ int main(int argc, char** argv) {
     string filename = argv[1];
     loadRectsFromFile(filename, planeRoots, bloatedRoots, rectsByLayer);
 
-    cout << "\n=== PLANE " << 0 << " ===\n";
+    DBG(D_PLANES) << "\n=== PLANE " << 0 << " ===\n";
     exportTiles(planeRoots[0], "SAM_Files/plane0.sam");
-    cout << "\n=== PLANE " << 1 << " ===\n";
+    DBG(D_PLANES) << "\n=== PLANE " << 1 << " ===\n";
     exportTiles(planeRoots[1], "SAM_Files/plane1.sam");
-    cout << "\n=== PLANE " << 2 << " ===\n";
+    DBG(D_PLANES) << "\n=== PLANE " << 2 << " ===\n";
     exportTiles(planeRoots[2], "SAM_Files/plane2.sam");
 
     // Choose which layers to route this run. Default = polysilicon
@@ -110,10 +111,10 @@ int main(int argc, char** argv) {
     for (int layer : routingAttrs) {
         int iter = 0;
         while (true) {
-            cout << "Layer " << layer << " Iteration: " << iter + 1 << "\n"; 
+            DBG(D_SUMMARY) << "Layer " << layer << " Iteration: " << iter + 1 << "\n"; 
             
             if (iter++ > MAX_ITERS) {
-                cout << "Max Iterations Reached for layer " << layer << "\n";
+                DBG(D_SUMMARY) << "Max Iterations Reached for layer " << layer << "\n";
                 break;
             }
             if(iter == 2) {
@@ -160,7 +161,7 @@ int main(int argc, char** argv) {
             if (layer == L_POLY) done = allDone(polysByNet);
             else if (layer == L_M1) done = allDone(metalsByNet);
             if(layer == L_M1 && done && !interlayerViasDone){
-                cout << "\n=== Placing inter-layer vias (poly -> LI -> M1) ===\n";
+                DBG(D_VIA) << "\n=== Placing inter-layer vias (poly -> LI -> M1) ===\n";
                 
                 placeInterlayerVias(planeRoots, bloatedRoots, rectsByLayer);
                 // exportTiles(planeRoots[0], "SAM_Files/plane0_routed.sam");
@@ -182,7 +183,7 @@ int main(int argc, char** argv) {
                 continue;
             }
             if (done) {
-                cout << "Layer " << attrToLayerName(layer) << " fully routed\n";
+                DBG(D_SUMMARY) << "Layer " << attrToLayerName(layer) << " fully routed\n";
                 break;
             }
         }
@@ -192,6 +193,15 @@ int main(int argc, char** argv) {
     // placeViaOnMetal(planeRoots,t,bloatedRoots,rectsByLayer);
     // changeAttrRect(planeRoots[0],-20,-20,10,10,L_POLYCON);
     finalizeVias(planeRoots);   // cut all contact squares now that routing is finished
+    // one-line quality summary (category: summary)
+    long vPL = 0, vLM = 0, vPLM = 0;
+    for (const auto& v : viaRecords) { if (v.stack == VIA_POLY_LI) vPL++; else if (v.stack == VIA_LI_M1) vLM++; else vPLM++; }
+    DBG(D_SUMMARY) << "STATS cell=" << filesystem::path(argv[1]).stem().string()
+        << " len(poly/li/m1)=" << runStats.length[0] << "/" << runStats.length[1] << "/" << runStats.length[2]
+        << " bends=" << runStats.bends[0] + runStats.bends[1] + runStats.bends[2]
+        << " vias(poly-li/li-m1/stack)=" << vPL << "/" << vLM << "/" << vPLM
+        << " deadFronts=" << runStats.deadFronts << "\n";
+    
     exportTiles(planeRoots[0], "SAM_Files/plane0_routed.sam");
     exportTiles(planeRoots[1], "SAM_Files/plane1_routed.sam");
     exportTiles(planeRoots[2], "SAM_Files/plane2_routed.sam");

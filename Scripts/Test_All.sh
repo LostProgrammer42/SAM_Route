@@ -7,7 +7,7 @@ VISUALIZER="./Visualize_Tiles.py"
 
 # ---------- COMPILE ----------
 echo "Compiling Route..."
-g++ -std=c++17 -g SAM_Route.cpp -o Route
+g++ -std=c++17 -g -DSAM_NO_DEBUG SAM_Route.cpp -o Route
 
 # ---------- RUN ALL CELLS ----------
 for rect_file in "$TEST_CELL_DIR"/*.rect; do

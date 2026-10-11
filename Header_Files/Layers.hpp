@@ -3,6 +3,7 @@
 // Depends on nothing else in the project.
 #pragma once
 #include <bits/stdc++.h>
+#include "Debug.hpp"
 
 // ---------------- Layer IDs ("attr" stored in each tile) ----------------
 // Must fit in 6 bits (CornerStitch::attr). L_NONE = 0 means "no layer".

@@ -230,7 +230,7 @@ void rebuildBloatedPlanes(CornerStitch* planeRoots[3], CornerStitch* bloatedRoot
         for (const auto& r : rectsByLayer[a]) {
             CornerStitch* t = findTileContaining(bloatedRoots[plane], r.lx + (long)r.wx * 0.5, r.ly + (long)r.wy * 0.5);
             if (!t) continue;
-            if (!bloatByRect(t, b, b, b, b)) cout << "Bloating Failed " << plane << "\n";
+            if (!bloatByRect(t, b, b, b, b)) DBG(D_SEARCH) << "Bloating Failed " << plane << "\n";
         }
     }
 }
@@ -288,7 +288,7 @@ bool placeViaStack(CornerStitch* planeRoots[3], CornerStitch* bloatedRoots[3],
         if (!pad || !electricallyAdjacent(pad, a)) {
             RoutePair link = { a->getllx(), a->getlly(), s.x, s.y, net };
             if (!attemptRoutePair(link, anchor.plane, planeRoots, bloatedRoots, rectsByLayer, 0, false, false, true, true)) {
-                cout << "Via bridge failed at (" << s.x << "," << s.y << "), trying next site\n";
+                DBG(D_VIA) << "Via bridge failed at (" << s.x << "," << s.y << "), trying next site\n";
                 viaRecords.pop_back();
                 removeViaPads(planeRoots, s.x, s.y, stack, placed);
                 rebuildRectsByLayer(planeRoots, rectsByLayer);
@@ -351,7 +351,7 @@ PlacedVia placeVia(CornerStitch* planeRoots[3], CornerStitch* bloatedRoots[3],
 
     if (opt.reuseExisting)
         if (CornerStitch* li = findExposedLI(planeRoots, tile)) {
-            cout << "placeVia: net " << net << " already exposed to LI\n";
+            DBG(D_VIA) << "placeVia: net " << net << " already exposed to LI\n";
             PlacedVia reused; reused.li = li; reused.stack = stack;   // fresh = false: nothing to undo
             return reused;
         }
@@ -458,7 +458,7 @@ bool attemptSwitchRouting(
     CornerStitch* srcTile = findTileContaining(planeRoots[anchorPlane], rpair.src_x, rpair.src_y);
     CornerStitch* dstTile = findTileContaining(planeRoots[anchorPlane], rpair.dst_x, rpair.dst_y);
     if (!srcTile || srcTile->isSpace() || !dstTile || dstTile->isSpace()) {
-        cout << "Switch: src/dst not on the anchor layer for net " << rpair.net << "\n";
+        DBG(D_SWITCH) << "Switch: src/dst not on the anchor layer for net " << rpair.net << "\n";
         return false;
     }
 
@@ -468,20 +468,20 @@ bool attemptSwitchRouting(
     opt.reuseExisting = !onPoly;
 
     PlacedVia v1 = placeVia(planeRoots, bloatedRoots, rectsByLayer, stack, anchorPlane, srcTile, opt);
-    if (!v1) { cout << "Switch: src via placement failed for net " << rpair.net << "\n"; return false; }
+    if (!v1) { DBG(D_SWITCH) << "Switch: src via placement failed for net " << rpair.net << "\n"; return false; }
 
     // poly: keep the second end off the gate side the first end used
     opt.avoidDir = onPoly ? -v1.dir : 0;
     PlacedVia v2 = placeVia(planeRoots, bloatedRoots, rectsByLayer, stack, anchorPlane, dstTile, opt);
     if (!v2) {
-        cout << "Switch: dst via placement failed for net " << rpair.net << "\n";
+        DBG(D_SWITCH) << "Switch: dst via placement failed for net " << rpair.net << "\n";
         undoVia(planeRoots, rectsByLayer, v1);
         return false;
     }
 
     // Both ends already sit on one LI shape (e.g. reused vias): the hop is already made.
     if (v1.li == v2.li || electricallyAdjacent(v1.li, v2.li)) {
-        cout << "Switch: vias already connected for net " << rpair.net << "\n";
+        DBG(D_SWITCH) << "Switch: vias already connected for net " << rpair.net << "\n";
         return true;
     }
 
@@ -492,13 +492,13 @@ bool attemptSwitchRouting(
     bool ok = attemptRoutePair(liRoute, liPlane, planeRoots, bloatedRoots, rectsByLayer, iter,
                                /*try_switch*/ false, /*bloat_src*/ false, /*advance_routepair*/ true);
     if (!ok) {
-        cout << "Switch: LI routing failed for net " << rpair.net << "\n";
+        DBG(D_SWITCH) << "Switch: LI routing failed for net " << rpair.net << "\n";
         undoVia(planeRoots, rectsByLayer, v2);
         undoVia(planeRoots, rectsByLayer, v1);
         return false;
     }
 
-    cout << "Switch routing succeeded for net " << rpair.net << "\n";
+    DBG(D_SUMMARY) << "Switch routing succeeded for net " << rpair.net << "\n";
     return true;
 }
 
@@ -519,15 +519,15 @@ void placeInterlayerVias(
         if (net == getNetId("#")) continue;
         if (!localM1ByNet.count(net)) continue;
 
-        cout << "Inter-layer via for net " << net << "\n";
+        DBG(D_VIA) << "Inter-layer via for net " << net << "\n";
         rebuildBloatedPlanes(planeRoots, bloatedRoots, rectsByLayer);
 
         ViaOptions opt;
         opt.preferNearM1 = true;      // the M1 pad is joined to the net's M1 later
         PlacedVia v = placeVia(planeRoots, bloatedRoots, rectsByLayer,
                                VIA_POLY_LI_M1, polyPlane, polyTiles[0], opt);
-        if (!v) cout << "  No via stack placed for net " << net << "\n";
-        else    cout << "  Via stack placed at (" << v.x << "," << v.y << ") for net " << net << "\n";
+        if (!v) DBG(D_VIA) << "  No via stack placed for net " << net << "\n";
+        else    DBG(D_VIA) << "  Via stack placed at (" << v.x << "," << v.y << ") for net " << net << "\n";
     }
     rebuildRectsByLayer(planeRoots, rectsByLayer);
 }

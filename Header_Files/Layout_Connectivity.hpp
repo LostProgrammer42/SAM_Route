@@ -48,9 +48,13 @@ inline bool geomTouch(const CornerStitch* a, const CornerStitch* b) {
     long bx1 = b->geturx();
     long by1 = b->getury();
 
-    // Touch or overlap in X and Y
     bool xTouch = !(ax1 < bx0 || bx1 < ax0);
     bool yTouch = !(ay1 < by0 || by1 < ay0);
+
+    // Sharing only a corner point is not a connection: need real overlap on one axis.
+    bool xOverlap = ax0 < bx1 && bx0 < ax1;
+    bool yOverlap = ay0 < by1 && by0 < ay1;
+    return (xOverlap && yTouch) || (yOverlap && xTouch);
 
     return xTouch && yTouch;
 }
