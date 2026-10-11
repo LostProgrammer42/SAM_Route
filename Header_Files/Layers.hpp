@@ -126,3 +126,54 @@ inline unsigned int getNetId(const std::string& net) {
     netList.push_back(net);
     return nextNetId++;
 }
+
+// ---------------- Stuff for Contacts and via stacks ----------------
+inline bool isContactAttr(unsigned int a) {
+    return a == L_POLYCON || a == L_LIBRDRCON || a == L_MCON;
+}
+
+// The contact tile that sits on a given conductor layer (L_NONE if the layer has none).
+inline unsigned int contactAttrOf(unsigned int layerAttr) {
+    switch (layerAttr) {
+        case L_POLY: return L_POLYCON;
+        case L_LI:   return L_LIBRDRCON;
+        case L_M1:   return L_MCON;
+        default:     return L_NONE;
+    }
+}
+
+// Plane index of a tile attr (-1 for markers/unknown).
+inline int attrToPlane(unsigned int attr) {
+    return layerNameToPlane(attrToLayerName(attr));
+}
+
+// Which conductor layers a via connects.
+enum ViaStack { VIA_POLY_LI, VIA_LI_M1, VIA_POLY_LI_M1 };
+
+// Bottom to top. Each layer in the stack gets a pad; each pad gets a contact.
+inline std::vector<unsigned int> viaLayers(ViaStack s) {
+    switch (s) {
+        case VIA_POLY_LI:    return {L_POLY, L_LI};
+        case VIA_LI_M1:      return {L_LI, L_M1};
+        case VIA_POLY_LI_M1: return {L_POLY, L_LI, L_M1};
+    }
+    return {};
+}
+
+// Pad and contact sizes per stack. EDIT THESE for the technology.
+// The contact is centred in the pad: offset = (pad - contact) / 2.
+struct ViaRule {
+    long padW, padH;       // pad rectangle on every plane of the stack
+    long contactSize;      // square contact carved in the middle
+    long offX() const { return (padW - contactSize) / 2; }
+    long offY() const { return (padH - contactSize) / 2; }
+};
+
+inline ViaRule viaRule(ViaStack s) {
+    switch (s) {
+        case VIA_POLY_LI:    return {5, 7, 3};
+        case VIA_LI_M1:      return {5, 5, 3};
+        case VIA_POLY_LI_M1: return {5, 7, 3};
+    }
+    return {5, 5, 3};
+}

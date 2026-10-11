@@ -42,6 +42,219 @@ bool attemptRoutePair(
     bool attemptedMetalSwitch = false
 );
 
+// A legal pad position and how far it is from the anchor.
+struct ViaSite { long x, y; long gap; long outside; long cdist; };
+
+// Is the whole pad free on every layer of the stack (bloated planes)? Own net is allowed.
+bool padFreeBloated(CornerStitch* bloatedRoots[3], ViaStack stack, long x, long y, unsigned int net) {
+    ViaRule rule = viaRule(stack);
+    for (unsigned int attr : viaLayers(stack)) {
+        CornerStitch* root = bloatedRoots[attrToPlane(attr)];
+        for (auto* t : tilesInRect(root, x, y, rule.padW, rule.padH))
+            if (t && !t->isSpace() && t->getNet() != net) return false;
+    }
+    return true;
+}
+
+// Candidate pad positions near the anchor rect [alx,aurx) x [aly,aury), nearest first.
+// radius = how far (in gap) from the anchor we are willing to look.
+vector<ViaSite> findViaSites(CornerStitch* bloatedRoots[3], ViaStack stack, unsigned int net,
+                             long alx, long aly, long aurx, long aury,
+                             int maxSites = 8, long radius = 12) {
+    ViaRule rule = viaRule(stack);
+    vector<ViaSite> all;
+    for (long x = alx - rule.padW - radius; x <= aurx + radius; ++x)
+        for (long y = aly - rule.padH - radius; y <= aury + radius; ++y) {
+            long gx = max(0L, max(x - aurx, alx - (x + rule.padW)));
+            long gy = max(0L, max(y - aury, aly - (y + rule.padH)));
+            if (gx + gy > radius) continue;
+            long cx2 = (2*x + rule.padW) - (alx + aurx);   // 2x centre offsets, stays integer
+            long cy2 = (2*y + rule.padH) - (aly + aury);
+            long ox = max(0L, min(x + rule.padW, aurx) - max(x, alx));
+            long oy = max(0L, min(y + rule.padH, aury) - max(y, aly));
+            long outside = rule.padW * rule.padH - ox * oy;     // new metal the pad adds beyond the anchor
+            all.push_back({x, y, gx + gy, outside, labs(cx2) + labs(cy2)});
+        }
+    sort(all.begin(), all.end(), [](const ViaSite& a, const ViaSite& b) {
+        return tie(a.gap, a.outside, a.cdist, a.y, a.x) < tie(b.gap, b.outside, b.cdist, b.y, b.x);
+    });
+    vector<ViaSite> out;
+    for (auto& s : all) {                       // test lazily, stop at maxSites
+        if (padFreeBloated(bloatedRoots, stack, s.x, s.y, net)) out.push_back(s);
+        if ((int)out.size() >= maxSites) break;
+    }
+    return out;
+}
+
+// Insert one pad per layer of `stack` at (x,y). All-or-nothing: if a plane refuses, the pads this
+// call created are removed again. A plane where the pad overlapped existing geometry is left alone.
+bool insertViaPads(CornerStitch* planeRoots[3], long x, long y, unsigned int net, ViaStack stack, vector<pair<int,bool>>* placedOut = nullptr) {
+    ViaRule rule = viaRule(stack);
+    vector<pair<int,bool>> done;                       // plane, was the pad area empty before?
+
+    for (unsigned int attr : viaLayers(stack)) {
+        int plane = attrToPlane(attr);
+        CornerStitch*& root = planeRoots[plane];       // reference: coalesce may replace the anchor
+
+        bool fresh = true;
+        for (auto* t : tilesInRect(root, x, y, rule.padW, rule.padH))
+            if (t && !t->isSpace()) { fresh = false; break; }
+
+        if (!insertTileRect(root, x, y, rule.padW, rule.padH, attr, net)) {
+            for (auto [p, wasFresh] : done)
+                if (wasFresh) deleteRect(planeRoots[p], x, y, rule.padW, rule.padH);
+            return false;
+        }
+        coalesce(root, 10);
+        done.push_back({plane, fresh});
+    }
+    if (placedOut) *placedOut = done;
+    return true;
+}
+
+// Undo a successful insertViaPads: remove the pad only on planes that were empty before.
+void removeViaPads(CornerStitch* planeRoots[3], long x, long y, ViaStack stack,
+                   const vector<pair<int,bool>>& placed) {
+    ViaRule rule = viaRule(stack);
+    for (auto [plane, fresh] : placed)
+        if (fresh) deleteRect(planeRoots[plane], x, y, rule.padW, rule.padH);
+}
+
+// Turn the centre of each pad into a contact tile and link the contacts across planes.
+// Call after insertViaPads, at whatever point the caller wants the contacts to appear.
+bool carveViaContacts(CornerStitch* planeRoots[3], long x, long y, ViaStack stack) {
+    ViaRule rule = viaRule(stack);
+    vector<unsigned int> layers = viaLayers(stack);
+    long cx = x + rule.offX(), cy = y + rule.offY();
+
+    vector<CornerStitch*> contacts;
+    for (unsigned int attr : layers) {
+        CornerStitch*& root = planeRoots[attrToPlane(attr)];
+        if (!changeAttrRect(root, cx, cy, rule.contactSize, rule.contactSize, contactAttrOf(attr)))
+            return false;
+        contacts.push_back(findTileContaining(root, cx + 0.1, cy + 0.1));
+    }
+    for (size_t i = 0; i + 1 < layers.size(); ++i) {
+        CornerStitch *lo = contacts[i], *hi = contacts[i + 1];
+        if (!lo || !hi) return false;
+        if (layers[i] == L_POLY) { lo->setContactBrother_1(hi); hi->setContactBrother_1(lo); }
+        else                     { lo->setContactBrother_2(hi); hi->setContactBrother_2(lo); }
+    }
+    return true;
+}
+
+// What the via attaches to. `tile` is on `plane`; `claim` are tiles that get relabelled with the
+// net while we try (the poly gate tab + its transistor), and restored if nothing works.
+struct ViaAnchor {
+    int plane;
+    CornerStitch* tile;
+    vector<CornerStitch*> claim;
+    int dir = 0;                 // poly only: which side of the gate the tab is on
+};
+
+vector<ViaAnchor> findViaAnchors(CornerStitch* planeRoots[3], int anchorPlane, CornerStitch* tile, int avoidDir)
+{
+    vector<ViaAnchor> out;
+    const int polyPlane = layerNameToPlane("polysilicon");
+
+    // metal: the tile itself is the anchor
+    if (anchorPlane != polyPlane) {                 
+        out.push_back({ anchorPlane, tile, {}, 0 });
+        return out;
+    }
+
+    // poly: gate extrusions whose far side is already on this net
+    auto isTrans = [](CornerStitch* t) {
+        return t && (t->getAttr() == L_NTRANS || t->getAttr() == L_PTRANS);
+    };
+    const unsigned int HASH_NET = getNetId("#");
+
+    unordered_set<CornerStitch*> seen;
+    deque<CornerStitch*> dq;
+    dq.push_back(planeRoots[polyPlane]);
+    seen.insert(planeRoots[polyPlane]);
+    while (!dq.empty()) {
+        CornerStitch* ext = dq.front(); dq.pop_front();
+        if (!ext) continue;
+        CornerStitch* nbrs[4] = { ext->left(), ext->right(), ext->bottom(), ext->top() };
+        for (auto nb : nbrs) if (nb && seen.insert(nb).second) dq.push_back(nb);
+
+        if (ext->getAttr() != tile->getAttr() || ext->getNet() != HASH_NET) continue;
+
+        int Dir = 0; CornerStitch* trans = nullptr;
+        if (isTrans(ext->bottom()))   { Dir = -1; trans = ext->bottom(); }
+        else if (isTrans(ext->top())) { Dir =  1; trans = ext->top(); }
+        if (Dir == 0 || Dir == avoidDir) continue;
+
+        CornerStitch* farPoly = (Dir == 1) ? trans->top() : trans->bottom();
+        if (!farPoly || !electricallyAdjacent(farPoly, tile)) continue;
+
+        out.push_back({ polyPlane, ext, { ext, trans }, Dir });
+    }
+    return out;
+}
+
+bool placeViaStack(CornerStitch* planeRoots[3], CornerStitch* bloatedRoots[3],
+                   unordered_map<int, vector<RectRecord>>& rectsByLayer,
+                   ViaStack stack, unsigned int net, const ViaAnchor& anchor,
+                   long& outX, long& outY, int maxSites = 8, long radius = 12)
+{
+    vector<pair<CornerStitch*, unsigned int>> oldNets;
+    for (auto* t : anchor.claim) { oldNets.push_back({t, t->getNet()}); t->setNet(net); }
+    auto restoreNets = [&]() { for (auto& [t, n] : oldNets) t->setNet(n); };
+
+    CornerStitch* a = anchor.tile;
+    auto sites = findViaSites(bloatedRoots, stack, net,
+                              a->getllx(), a->getlly(), a->geturx(), a->getury(), maxSites, radius);
+
+    for (auto& s : sites) {
+        vector<pair<int,bool>> placed;
+        if (!insertViaPads(planeRoots, s.x, s.y, net, stack, &placed)) continue;
+        rebuildRectsByLayer(planeRoots, rectsByLayer);       // router rebuilds bloat from this
+
+        // Touching / overlapping the anchor already? Otherwise bridge on the anchor's plane.
+        CornerStitch* pad = findTileContaining(planeRoots[anchor.plane], s.x + 0.1, s.y + 0.1);
+        if (!pad || !electricallyAdjacent(pad, a)) {
+            RoutePair link = { a->getllx(), a->getlly(), s.x, s.y, net };
+            if (!attemptRoutePair(link, anchor.plane, planeRoots, bloatedRoots, rectsByLayer, 0, false, false, true)) {
+                cout << "Via bridge failed at (" << s.x << "," << s.y << "), trying next site\n";
+                removeViaPads(planeRoots, s.x, s.y, stack, placed);
+                rebuildRectsByLayer(planeRoots, rectsByLayer);
+                continue;
+            }
+        }
+
+        if (!carveViaContacts(planeRoots, s.x, s.y, stack)) {
+            removeViaPads(planeRoots, s.x, s.y, stack, placed);
+            rebuildRectsByLayer(planeRoots, rectsByLayer);
+            continue;
+        }
+        rebuildRectsByLayer(planeRoots, rectsByLayer);
+        outX = s.x; outY = s.y;
+        return true;
+    }
+    restoreNets();
+    return false;
+}
+
+struct PlacedVia { CornerStitch* li = nullptr; int dir = 0; };
+
+PlacedVia placeVia(CornerStitch* planeRoots[3], CornerStitch* bloatedRoots[3],
+                   unordered_map<int, vector<RectRecord>>& rectsByLayer,
+                   ViaStack stack, int anchorPlane, CornerStitch* tile, int avoidDir = 0)
+{
+    if (!tile || tile->isSpace()) return {};
+    const int liPlane = layerNameToPlane("li");
+    const unsigned int net = tile->getNet();
+
+    for (auto& anchor : findViaAnchors(planeRoots, anchorPlane, tile, avoidDir)) {
+        long vx, vy;
+        if (!placeViaStack(planeRoots, bloatedRoots, rectsByLayer, stack, net, anchor, vx, vy)) continue;
+        return { findTileContaining(planeRoots[liPlane], vx + 0.1, vy + 0.1), anchor.dir };
+    }
+    return {};
+}
+
 bool placeContactSquare(
     CornerStitch* substrateRoot,
     CornerStitch* squareRoot,
@@ -100,8 +313,8 @@ pair<pair<CornerStitch*, CornerStitch*>,int> placeViaOnPoly(
 ) {
     if (!PolyplaneRoot || !LiplaneRoot || !polyTile) return {{nullptr, nullptr}, 0};
 
-    const int S = 5;
-    const int H = 7;
+    const ViaRule rule = viaRule(VIA_POLY_LI);
+    const long S = rule.padW, H = rule.padH;
     unsigned int srcNet = polyTile->getNet();
     unsigned int polyAttr = polyTile->getAttr();
     const unsigned int HASH_NET = getNetId("#");
@@ -202,30 +415,12 @@ pair<pair<CornerStitch*, CornerStitch*>,int> placeViaOnPoly(
             if (!findFreeInLiBloated(base_lx, base_ly, final_lx, final_ly))
                 continue;
 
-            // Try inserting in poly plane
-            bool polyOk = insertTileRect(PolyplaneRoot, final_lx, final_ly, S, H, L_POLY, srcNet);
-            if (!polyOk) continue;
-            coalesce(PolyplaneRoot, 10);
-
-            // Try inserting in Li plane
-            bool liOk = insertTileRect(LiplaneRoot, final_lx, final_ly, S, H, L_LI, srcNet);
-            if (!liOk) {
-                // Rollback poly insertion
-                deleteRect(PolyplaneRoot, final_lx, final_ly, S, H);
-                continue;
+            CornerStitch* viaRoots[3] = { PolyplaneRoot, LiplaneRoot, nullptr };
+            if (!insertViaPads(viaRoots, final_lx, final_ly, srcNet, VIA_POLY_LI)) continue;
+            if (!carveViaContacts(viaRoots, final_lx, final_ly, VIA_POLY_LI)) {
+                cout << "Contact brother setup failed\n";
+                continue;                       // same as before: the pads stay in place
             }
-            coalesce(LiplaneRoot, 10);
-
-            // Place contacts in center 3x3
-            changeAttrRect(PolyplaneRoot, final_lx+1, final_ly+2, 3, 3, L_POLYCON);
-            changeAttrRect(LiplaneRoot,   final_lx+1, final_ly+2, 3, 3, L_LIBRDRCON);
-
-            auto lower = findTileContaining(PolyplaneRoot, final_lx+1.1, final_ly+2.1);
-            auto upper = findTileContaining(LiplaneRoot,   final_lx+1.1, final_ly+2.1);
-            if (!lower || !upper) { cout << "Contact brother setup failed\n"; continue; }
-
-            lower->setContactBrother_1(upper);
-            upper->setContactBrother_1(lower);
             trans->setNet(srcNet);
 
             // Rebuild rectsByLayer after insertions
@@ -288,24 +483,11 @@ bool attemptSwitchRouting(
     CornerStitch* dstTile = findTileContaining(planeRoots[layerNameToPlane("polysilicon")], dx, dy);
 
     if (!srcTile || !dstTile) return false;
-    auto Comp_via1 = placeViaOnPoly(
-        planeRoots[layerNameToPlane("polysilicon")],
-        planeRoots[layerNameToPlane("li")],
-        srcTile,bloatedRoots,rectsByLayer,iter
-    );
-    auto Via1_Dir = Comp_via1.second;
-    auto Comp_via2 = placeViaOnPoly(
-        planeRoots[layerNameToPlane("polysilicon")],
-        planeRoots[layerNameToPlane("li")],
-        dstTile, bloatedRoots,rectsByLayer,iter,- Via1_Dir
-    );
+    const int polyPlane = layerNameToPlane("polysilicon");
+    PlacedVia v1 = placeVia(planeRoots, bloatedRoots, rectsByLayer, VIA_POLY_LI, polyPlane, srcTile);
+    PlacedVia v2 = v1.li ? placeVia(planeRoots, bloatedRoots, rectsByLayer, VIA_POLY_LI, polyPlane, dstTile, -v1.dir) : PlacedVia{};
 
-    auto via1 = Comp_via1.first;
-    auto via2 = Comp_via2.first;
-
-    
-
-    if (!via1.first || !via2.first) {
+    if (!v1.li || !v2.li) {
         cout << "Switch: via placement failed\n";
         return false;
     }
@@ -313,8 +495,8 @@ bool attemptSwitchRouting(
 
     //
     RoutePair liRoute = {
-        via1.second->getllx(), via1.second->getlly(),
-        via2.second->getllx(), via2.second->getlly(),
+        v1.li->getllx(), v1.li->getlly(),
+        v2.li->getllx(), v2.li->getlly(),
         rpair.net
     };
     //
@@ -350,8 +532,8 @@ void placeInterlayerVias(
     int polyPlane = layerNameToPlane("polysilicon");
     int liPlane   = layerNameToPlane("li");
     int m1Plane   = layerNameToPlane("m1");
-    const long S  = 5;
-    const long H  = 7;
+    const ViaRule rule = viaRule(VIA_POLY_LI_M1);
+    const long S = rule.padW, H = rule.padH;   // still 5 x 7, so freeOnAllPlanes needs no change
 
     unordered_map<unsigned int, vector<CornerStitch*>> localPolyByNet, localM1ByNet;
     rebuildLayerByNet(L_POLY, planeRoots, localPolyByNet, rectsByLayer);
@@ -484,28 +666,10 @@ void placeInterlayerVias(
             cout << "  No free 3-plane position found for net " << net << "\n";
             continue;
         }
-
-        // === Insert poly block ===
-        bool polyOk = insertTileRect(planeRoots[polyPlane], found_lx, found_ly, S, H, L_POLY, net);
-        if (!polyOk) { cout << "  Poly insertion failed for net " << net << "\n"; continue; }
-        coalesce(planeRoots[polyPlane], 10);
-
-        // === Insert LI block ===
-        bool liOk = insertTileRect(planeRoots[liPlane], found_lx, found_ly, S, H, L_LI, net);
-        if (!liOk) {
-            deleteRect(planeRoots[polyPlane], found_lx, found_ly, S, H);
-            cout << "  LI insertion failed for net " << net << "\n";
+        if (!insertViaPads(planeRoots, found_lx, found_ly, net, VIA_POLY_LI_M1)) {
+            cout << "  Via pad insertion failed for net " << net << "\n";
             continue;
         }
-        coalesce(planeRoots[liPlane], 10);
-         // === Insert M1 seed ===
-        bool m1Ok = insertTileRect(planeRoots[m1Plane], found_lx, found_ly, S, H, L_M1, net);
-        if (!m1Ok) {
-            cout << "  M1 seed insertion failed for net " << net << "\n";
-            continue;
-        }
-        coalesce(planeRoots[m1Plane], 10);
-
 
         // === Route from extrusion to via block, same as placeViaOnPoly ===
         RoutePair extToVia = {
@@ -519,25 +683,9 @@ void placeInterlayerVias(
         bool routeOk = attemptRoutePair(extToVia, polyPlane, localRoots, localBloated, rectsByLayer, 0, false, false, true);
         if (!routeOk) cout << "  Poly routing to via failed for net " << net << " (continuing anyway)\n";
 
-       // === Place mcon,polycon and librdrcon in center 3x3 ===
-        changeAttrRect(planeRoots[m1Plane], found_lx+1, found_ly+2, 3, 3, L_MCON);
-        changeAttrRect(planeRoots[polyPlane], found_lx+1, found_ly+2, 3, 3, L_POLYCON);
-        changeAttrRect(planeRoots[liPlane],   found_lx+1, found_ly+2, 3, 3, L_LIBRDRCON);
-
-        // === Set up contact brothers ===
-        auto polyc = findTileContaining(planeRoots[polyPlane], found_lx+1.1, found_ly+2.1);
-        auto librdr = findTileContaining(planeRoots[liPlane],   found_lx+1.1, found_ly+2.1);
-        auto mcon = findTileContaining(planeRoots[m1Plane],   found_lx+1.1, found_ly+2.1);
-
-        if (polyc && librdr && mcon) {
-            polyc->setContactBrother_1(librdr);
-            librdr->setContactBrother_1(polyc);
-            mcon->setContactBrother_2(librdr);
-            librdr->setContactBrother_2(mcon);
-        } else {
+        if (!carveViaContacts(planeRoots, found_lx, found_ly, VIA_POLY_LI_M1))
             cout << "  Contact brother setup failed for net " << net << "\n";
-        }
-
+        
         cout << "  Via stack placed at (" << found_lx << "," << found_ly << ") for net " << net << "\n";
     }
 
@@ -554,8 +702,9 @@ CornerStitch* placeViaOnMetal(
     int m1Plane = layerNameToPlane("m1");
     int liPlane = layerNameToPlane("li");
  
-    const long S = 5, H = 5;
- 
+    const ViaRule rule = viaRule(VIA_LI_M1);
+    const long S = rule.padW, H = rule.padH;   // 5 x 5
+
     if (!srcTile || srcTile->isSpace()) return nullptr;
  
     unsigned int srcNet = srcTile->getNet();
@@ -769,64 +918,27 @@ CornerStitch* placeViaOnMetal(
     //    FIX: insert M1 first so changeAttrRect(m1Plane,...) has a tile.
     // ------------------------------------------------------------------
  
-    // Insert M1 seed at via location so the mcon lands on real M1 metal.
-    // If the position already overlaps srcTile the insert may be a no-op
-    // or merge — both are fine.
-    bool m1SeedOk = insertTileRect(planeRoots[m1Plane], found_lx, found_ly, S, H, L_M1, srcNet);
-    if (!m1SeedOk) {
-        // Tolerate: position may already be covered by srcTile itself
-        CornerStitch* existing = findTileContaining(planeRoots[m1Plane], found_lx + 0.1, found_ly + 0.1);
-        if (!existing || existing->isSpace() || existing->getNet() != srcNet) {
-            cout << "placeViaOnMetal: M1 seed insertion failed for net " << srcNet << "\n";
-            return nullptr;
-        }
-        cout << "placeViaOnMetal: M1 seed skipped (already covered by same-net tile)\n";
-    }
-    coalesce(planeRoots[m1Plane], 10);
-
-    // Now connect the M1 seed back to srcTile with a route if they aren't
-    // already electrically adjacent (position was outside srcTile boundary).
-    {
-        CornerStitch* m1At = findTileContaining(planeRoots[m1Plane], found_lx + 0.1, found_ly + 0.1);
-        CornerStitch* m1Src = findTileContaining(planeRoots[m1Plane], srcTile->getllx() + 0.1, srcTile->getlly() + 0.1);
-        if (m1At && m1Src && !electricallyAdjacent(m1At, m1Src)) {
-            RoutePair m1Bridge = {
-                srcTile->getllx(), srcTile->getlly(),
-                found_lx, found_ly,
-                srcNet
-            };
-            attemptRoutePair(m1Bridge, m1Plane, planeRoots, bloatedRoots, rectsByLayer,
-                             0, false, false, true);
-        }
-    }
- 
-    bool liOk = insertTileRect(planeRoots[liPlane], found_lx, found_ly, S, H, L_LI, srcNet);
-    if (!liOk) {
-        cout << "placeViaOnMetal: LI insertion failed for net " << srcNet << "\n";
-        // Roll back M1 seed
-        deleteRect(planeRoots[m1Plane], found_lx, found_ly, S, H);
+    if (!insertViaPads(planeRoots, found_lx, found_ly, srcNet, VIA_LI_M1)) {
+        cout << "placeViaOnMetal: via pad insertion failed for net " << srcNet << "\n";
         return nullptr;
     }
-    coalesce(planeRoots[liPlane], 10);
+
+    // Connect the M1 pad back to srcTile if the position was outside it (unchanged block)
+    {
+        CornerStitch* m1At  = findTileContaining(planeRoots[m1Plane], found_lx + 0.1, found_ly + 0.1);
+        CornerStitch* m1Src = findTileContaining(planeRoots[m1Plane], srcTile->getllx() + 0.1, srcTile->getlly() + 0.1);
+        if (m1At && m1Src && !electricallyAdjacent(m1At, m1Src)) {
+            RoutePair m1Bridge = { srcTile->getllx(), srcTile->getlly(), found_lx, found_ly, srcNet };
+            attemptRoutePair(m1Bridge, m1Plane, planeRoots, bloatedRoots, rectsByLayer, 0, false, false, true);
+        }
+    }
  
     // FIX: use +1,+2 offsets to match placeInterlayerVias convention
     //      (+1,+1 left the mcon 1 unit short of center in H=5 tiles)
     long cx = found_lx + 1, cy = found_ly + 1;
-    changeAttrRect(planeRoots[liPlane], cx, cy, 3, 3, L_LIBRDRCON);
-    changeAttrRect(planeRoots[m1Plane], cx, cy, 3, 3, L_MCON);
- 
-    auto librdr = findTileContaining(planeRoots[liPlane], cx + 0.1, cy + 0.1);
-    auto mcon   = findTileContaining(planeRoots[m1Plane], cx + 0.1, cy + 0.1);
-    if (librdr && mcon) {
-        mcon->setContactBrother_2(librdr);
-        librdr->setContactBrother_2(mcon);
-    } else {
+    if (!carveViaContacts(planeRoots, found_lx, found_ly, VIA_LI_M1))
         cout << "placeViaOnMetal: contact brother setup failed for net " << srcNet << "\n";
-    }
-    coalesce(planeRoots[0]);
-    coalesce(planeRoots[1]);
-    coalesce(planeRoots[2]);
- 
+
     rebuildRectsByLayer(planeRoots, rectsByLayer);
     cout << "placeViaOnMetal: via placed at (" << found_lx << "," << found_ly << ") for net " << srcNet << "\n";
     // Return the LI tile (the full L_LI block, not the contact sub-tile)
@@ -873,6 +985,20 @@ bool attemptSwitchRoutingMetal(
         return false;
     }
 
+    // PlacedVia v1 = placeVia(planeRoots, bloatedRoots, rectsByLayer, VIA_LI_M1, m1Plane, srcM1);
+    // if (!v1.li) {
+    //     cout << "SwitchRoutingMetal: src via placement failed for net " << rpair.net << "\n";
+    //     return false;
+    // }
+
+    // PlacedVia v2 = placeVia(planeRoots, bloatedRoots, rectsByLayer, VIA_LI_M1, m1Plane, dstM1);
+    // if (!v2.li) {
+    //     cout << "SwitchRoutingMetal: dst via placement failed for net " << rpair.net << "\n";
+    //     return false;
+    // }
+
+    // CornerStitch* srcLI = v1.li;     // so the rest of the function stays as it is
+    // CornerStitch* dstLI = v2.li;
     // Sanity: if both vias landed on the same LI tile they're already connected
     if (srcLI == dstLI || electricallyAdjacent(srcLI, dstLI)) {
         cout << "SwitchRoutingMetal: vias already adjacent for net " << rpair.net << "\n";

@@ -58,26 +58,22 @@ vector<Port> getPorts(
         return (b->getNet() == t->getNet());  // allow same-net adjacency
     };
 
-    // LEFT port
-    if (freeInBloated(lx - 0.1, cy))
-        if (!((cy < ly + 0.45*routeWidth(t->getAttr())) || (cy > ry - 0.45*routeWidth(t->getAttr()))))
+    if (!((cy < ly + 0.45*routeWidth(t->getAttr())) || (cy > ry - 0.45*routeWidth(t->getAttr())))){
+        // LEFT port
+        if (freeInBloated(lx - 0.1, cy))
             ports.push_back({lx, cy, LEFT});
-
-    // RIGHT port
-    if (freeInBloated(rx + 0.1, cy))
-        if (!((cy < ly + 0.45*routeWidth(t->getAttr())) || (cy > ry - 0.45*routeWidth(t->getAttr()))))    
+        // RIGHT port
+        if (freeInBloated(rx + 0.1, cy))
             ports.push_back({rx, cy, RIGHT});
-
-    // BOTTOM port
-    if (freeInBloated(cx, ly - 0.1))
-        if (!((cx < lx + 0.45*routeWidth(t->getAttr())) || (cx > rx - 0.45*routeWidth(t->getAttr()))))
+    }
+    if (!((cx < lx + 0.45*routeWidth(t->getAttr())) || (cx > rx - 0.45*routeWidth(t->getAttr())))){
+        // BOTTOM port
+        if (freeInBloated(cx, ly - 0.1))
             ports.push_back({cx, ly, DOWN});
-
-    // TOP port
-    if (freeInBloated(cx, ry + 0.1))
-        if (!((cx < lx + 0.45*routeWidth(t->getAttr())) || (cx > rx - 0.45*routeWidth(t->getAttr()))))
+        // TOP port
+        if (freeInBloated(cx, ry + 0.1))
             ports.push_back({cx, ry, UP});
-    
+    }
     if(multiSample){
         long w = rx - lx;
         long h = ry - ly;
@@ -192,19 +188,13 @@ vector<Port> getPortsForNet(
     return result;
 }
 
-bool inferPreferHorizontal(const vector<vector<Point>>& pathPieces, bool defaultDir)
-{
-    if (pathPieces.empty()) return defaultDir;
-
-    const auto& last = pathPieces.back();
-    if (last.size() < 2) return defaultDir;
-
-    const Point& a = last[last.size() - 2];
-    const Point& b = last[last.size() - 1];
-
-    if (a.y == b.y) return true;
-    if (a.x == b.x) return false;
-
+bool inferPreferHorizontal(const vector<vector<Point>>& pieces, bool defaultDir) {
+    for (int i = (int)pieces.size() - 1; i >= 0; --i)
+        for (int j = (int)pieces[i].size() - 1; j >= 1; --j) {
+            const Point &a = pieces[i][j-1], &b = pieces[i][j];
+            if (a.y == b.y && a.x != b.x) return true;   // horizontal segment
+            if (a.x == b.x && a.y != b.y) return false;  // vertical segment
+        }
     return defaultDir;
 }
 
@@ -231,8 +221,8 @@ vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit, bool preferHo
     Point vFirst = {x1, y2};  // vertical → horizontal
 
     auto insideTile = [&](Point p) {
-        return p.x >= t->getllx() && p.x <= t->geturx() &&
-               p.y >= t->getlly() && p.y <= t->getury();
+    return p.x >= t->getllx() && p.x < t->geturx() &&
+           p.y >= t->getlly() && p.y < t->getury();
     };
 
     // Prefer continuing direction if valid
@@ -250,10 +240,16 @@ vector<Point> pathInTile(CornerStitch* t, Point entry, Point exit, bool preferHo
     }
     else {
         // Fallback: midpoint (should be rare)
-        long cx = (x1 + x2) / 2;
-        long cy = (y1 + y2) / 2;
-        result.push_back({cx, y1});
-        result.push_back({cx, y2});
+        bool leavingSideways = (x2 == t->getllx() || x2 == t->geturx());
+        if (leavingSideways) {                      // jog is vertical, at mid-x
+            long cx = (x1 + x2) / 2;
+            result.push_back({cx, y1});
+            result.push_back({cx, y2});
+        } else {                                    // jog is horizontal, at mid-y
+            long cy = (y1 + y2) / 2;
+            result.push_back({x1, cy});
+            result.push_back({x2, cy});
+        }
     }
 
     result.push_back({x2, y2});

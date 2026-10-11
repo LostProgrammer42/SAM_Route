@@ -332,7 +332,6 @@ bool attemptRoutePair(
 
         int route_ittr = 0;
         bool meet = false;
-        bool frontExhausted = false;
         int deadFront = 0;   // 1 = src front ran out of room, 2 = dst front
 
         auto advanceOneStep = [&](CornerStitch*& cur, Point& curPoint, const Point& targetPoint,
@@ -386,7 +385,7 @@ bool attemptRoutePair(
                 }
 
                 if(!next || bestCost==LONG_MAX){
-                    if(pathPieces.empty()) { frontExhausted = true; return false; }
+                    if (pathPieces.empty()) { deadFront = isSrc ? 1 : 2; return false; }
                     curPoint = pathPieces.back().front();
                     pathPieces.pop_back();
                     routeCosts.pop_back();
@@ -420,7 +419,8 @@ bool attemptRoutePair(
                 }
                 
                 exit = findClosestPoint(next, curPoint); 
-                bool dir = inferPreferHorizontal(pathPieces, true);
+                bool defaultH = (firstNormal == LEFT || firstNormal == RIGHT);
+                bool dir  = inferPreferHorizontal(pathPieces, defaultH);
                 pathPieces.push_back(pathInTile(cur, curPoint, exit, dir));
                 pathTiles.push_back(cur);
                 visitedTiles.push_back(cur);
@@ -433,43 +433,53 @@ bool attemptRoutePair(
             }
             return false;
         };
+        // Push straight out of the port by P = ceil(W/2) so the first bend is at least
+        // half a width off the tile edge. Returns false if there's no room in front.
+        auto advanceStepOne = [&](const Port& port, CornerStitch* bloatedRoot, CornerStitch* src,
+                            CornerStitch*& cur, Point& curPoint,
+                            vector<vector<Point>>& pieces, vector<unsigned long>& costs,
+                            vector<CornerStitch*>& tiles, vector<CornerStitch*>& visited) -> bool{
+            long W = routeWidth(src->getAttr()), lo = W / 2, hi = W - lo;
+            long P = (W + 1) / 2;       // ceil(W/2)
 
+            long rx, ry; unsigned long rw, rh; Point tip = {port.x, port.y};
+            switch (port.normal) {          // region IN FRONT of the port that the wire will occupy
+                case RIGHT: tip.x += P; rx = port.x;         ry = port.y - lo;     rw = P + hi; rh = W;      break;
+                case LEFT:  tip.x -= P; rx = port.x - P - lo; ry = port.y - lo;     rw = P + lo; rh = W;      break;
+                case UP:    tip.y += P; rx = port.x - lo;     ry = port.y;          rw = W;      rh = P + hi; break;
+                case DOWN:  tip.y -= P; rx = port.x - lo;     ry = port.y - P - lo; rw = W;      rh = P + lo; break;
+                default: return false;
+            }
+            for (auto* t : tilesInRect(bloatedRoot, rx, ry, rw, rh)) {
+                if (!t) return false;
+                bool isContact = (t->getAttr() == L_POLYCON || t->getAttr() == L_LIBRDRCON || t->getAttr() == L_MCON);
+                bool own = (t->getNet() == src->getNet() && (t->getAttr() == src->getAttr() || isContact));
+                if (!t->isSpace() && !own) return false;            // foreign bloat/obstacle in the way
+            }
+            pieces.push_back({curPoint, tip});
+            costs.push_back(P);
+            tiles.push_back(cur);       // keep tiles/pieces in step, like advanceOneStep
+            visited.push_back(cur);
+            curPoint = tip;             // cur stays: the stub lies inside the first (band) tile
+            return true;
+        };
+
+        if (!advanceStepOne(bestSrc, bloatedRoots[routePlane], src, curS, curPointS, pathPiecesS, routeCostsS, pathTilesS, visitedTilesS) ||
+            !advanceStepOne(bestDst, bloatedRoots[routePlane], src, curD, curPointD, pathPiecesD, routeCostsD, pathTilesD, visitedTilesD)) {
+            failedRoutes.push_back(make_pair(bestSrc, bestDst));   // no room to push out of one of the ports
+            continue;
+        }
+        if (curS == curD || curS->containsPointAllEdges(curPointD.x, curPointD.y) || curD->containsPointAllEdges(curPointS.x, curPointS.y)) 
+            meet = true;
         // -------- alternating SRC → DST → SRC → DST --------
-        while (curS && curD && route_ittr++ < 50) {
+        while (!meet && curS && curD && route_ittr++ < 50) {
+            // Step 1
             if (route_ittr == 1){
-                long halfWidthS = ceil(0.5*routeWidth(curS->getAttr()));
-                switch(bestSrc.normal){
-                    case LEFT:  advanceOneStep(curS, curPointS, Point{curPointS.x-halfWidthS, curPointS.y}, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal); break;
-                    case RIGHT: advanceOneStep(curS, curPointS, Point{curPointS.x+halfWidthS, curPointS.y}, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal); break;
-                    case UP:    advanceOneStep(curS, curPointS, Point{curPointS.x, curPointS.y-halfWidthS}, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal); break;
-                    case DOWN:  advanceOneStep(curS, curPointS, Point{curPointS.x, curPointS.y+halfWidthS}, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal); break;
-                    default: break;
-                }
-                if (curS == curD ||
-                    curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
-                    meet = true;
-                    break;
-                }
-                long halfWidthD = ceil(0.5*routeWidth(curD->getAttr()));
-                switch(bestSrc.normal){
-                    case LEFT:  advanceOneStep(curD, curPointD, Point{curPointD.x-halfWidthD, curPointD.y}, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, true, bestDst.normal); break;
-                    case RIGHT: advanceOneStep(curD, curPointD, Point{curPointD.x+halfWidthD, curPointD.y}, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, true, bestDst.normal); break;
-                    case UP:    advanceOneStep(curD, curPointD, Point{curPointD.x, curPointD.y-halfWidthD}, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, true, bestDst.normal); break;
-                    case DOWN:  advanceOneStep(curD, curPointD, Point{curPointD.x, curPointD.y+halfWidthD}, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, true, bestDst.normal); break;
-                    default: break;
-                }
-                if (curD == curS ||
-                    curD->containsPointAllEdges(curPointS.x, curPointS.y)) {
-                    meet = true;
-                    break;
-                }
-                continue;
+               
             }
+            
             // SRC advances toward DST
-            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal)) {
-                if (frontExhausted) deadFront = 1;
-                break;
-            }
+            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal)) break;
             if (curS == curD ||
                 curS->containsPointAllEdges(curPointD.x, curPointD.y)) {
                 meet = true;
@@ -477,10 +487,7 @@ bool attemptRoutePair(
             }
 
             // DST advances toward SRC
-            if (!advanceOneStep(curS, curPointS, curPointD, routeCostsS, pathPiecesS, pathTilesS, visitedTilesS, true, bestSrc.normal)) {
-                if (frontExhausted) deadFront = 1;
-                break;
-            }
+            if (!advanceOneStep(curD, curPointD, curPointS, routeCostsD, pathPiecesD, pathTilesD, visitedTilesD, false, bestDst.normal)) break;
             if (curD == curS ||
                 curD->containsPointAllEdges(curPointS.x, curPointS.y)) {
                 meet = true;
