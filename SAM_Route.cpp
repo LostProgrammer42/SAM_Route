@@ -23,6 +23,8 @@ int main(int argc, char** argv) {
         bloatedRoots[i] = new CornerStitch(-30, -30);
     }
 
+    viaPlaneRoots = planeRoots;   // lets electricallyAdjacent follow via footprints between planes
+
     string filename = argv[1];
     loadRectsFromFile(filename, planeRoots, bloatedRoots, rectsByLayer);
 
@@ -189,6 +191,7 @@ int main(int argc, char** argv) {
     // CornerStitch* t =  findTileContaining(planeRoots[0], 25,12);
     // placeViaOnMetal(planeRoots,t,bloatedRoots,rectsByLayer);
     // changeAttrRect(planeRoots[0],-20,-20,10,10,L_POLYCON);
+    finalizeVias(planeRoots);   // cut all contact squares now that routing is finished
     exportTiles(planeRoots[0], "SAM_Files/plane0_routed.sam");
     exportTiles(planeRoots[1], "SAM_Files/plane1_routed.sam");
     exportTiles(planeRoots[2], "SAM_Files/plane2_routed.sam");

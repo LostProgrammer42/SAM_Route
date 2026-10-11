@@ -10,6 +10,30 @@
 #include "Corner_Stitch.hpp"
 using namespace std;
 
+struct ViaRecord { ViaStack stack; long x, y; unsigned int net; };   // x,y = pad lower-left
+inline vector<ViaRecord> viaRecords;
+inline CornerStitch** viaPlaneRoots = nullptr;   // main sets this once
+
+// Same-net tiles on the OTHER layers of any via whose pad `cur` overlaps.
+inline void viaCrossLayerNeighbors(CornerStitch* cur, vector<CornerStitch*>& out) {
+    if (!viaPlaneRoots || viaRecords.empty()) return;
+    const unsigned int net  = cur->getNet();
+    const unsigned int base = baseLayerAttr(cur->getAttr());
+    for (const auto& v : viaRecords) {
+        if (v.net != net) continue;
+        ViaRule rule = viaRule(v.stack);
+        if (cur->geturx() <= v.x || cur->getllx() >= v.x + rule.padW ||
+            cur->getury() <= v.y || cur->getlly() >= v.y + rule.padH) continue;
+        vector<unsigned int> layers = viaLayers(v.stack);
+        if (find(layers.begin(), layers.end(), base) == layers.end()) continue;
+        for (unsigned int la : layers) {
+            if (la == base) continue;
+            for (auto* t : tilesInRect(viaPlaneRoots[attrToPlane(la)], v.x, v.y, rule.padW, rule.padH))
+                if (t && !t->isSpace() && t->getNet() == net) out.push_back(t);
+        }
+    }
+}
+
 // Bounding-box test: true if the two tiles overlap or share an edge or a corner.
 // Purely geometric: ignores net, layer, plane and the space flag.
 // Only used as a quick first check inside electricallyAdjacent().
@@ -70,6 +94,9 @@ bool electricallyAdjacent(CornerStitch* a, CornerStitch* b) {
             if (auto* cb1 = cur->getContactBrother_1()) neighbors.push_back(cb1);
             if (auto* cb2 = cur->getContactBrother_2()) neighbors.push_back(cb2);
         }
+
+        // Cross-layer links through the via registry
+        viaCrossLayerNeighbors(cur, neighbors);
 
         for (auto* t : neighbors) {
             if (!t || t->isSpace() || t->isBloat()) continue;

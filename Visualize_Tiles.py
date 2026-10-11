@@ -212,5 +212,5 @@ plt.savefig(
     format="pdf"
 )
 
-plt.show()
+#plt.show()
 

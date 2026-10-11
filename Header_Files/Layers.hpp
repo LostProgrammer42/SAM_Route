@@ -160,6 +160,13 @@ inline std::vector<unsigned int> viaLayers(ViaStack s) {
     return {};
 }
 
+inline unsigned int baseLayerAttr(unsigned int a) {   // contact tile counts as the layer it sits on
+    if (a == L_POLYCON)   return L_POLY;
+    if (a == L_LIBRDRCON) return L_LI;
+    if (a == L_MCON)      return L_M1;
+    return a;
+}
+
 // Pad and contact sizes per stack. EDIT THESE for the technology.
 // The contact is centred in the pad: offset = (pad - contact) / 2.
 struct ViaRule {

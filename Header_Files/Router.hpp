@@ -271,7 +271,7 @@ bool attemptRoutePair(
         if (failedRoutes.size() == srcPorts.size() * dstPorts.size() || bestCost == LONG_MAX) {
             if (!attemptedMetalSwitch && routePlane == 2) {
                 // M1 is trapped: hop to LI. If that connects the pair we are done.
-                if (attemptSwitchRoutingMetal(rpair, iter, planeRoots, bloatedRoots, rectsByLayer)) return true;
+                if (attemptSwitchRouting(rpair, iter, 2, planeRoots, bloatedRoots, rectsByLayer)) return true;
                 attemptedMetalSwitch = true;   // do not repeat it in the bloat_src=false retry below
                 noRoute = true;
             }
@@ -541,14 +541,14 @@ bool attemptRoutePair(
             if (excessive && try_switch && routePlane == 0) {
                 cout << "Route found but cost " << totalCost << " >> ideal " << ideal
                     << " ; shoudld do switch routing for net " << rpair.net << "\n";
-                bool ok = attemptSwitchRouting(rpair,iter,planeRoots,bloatedRoots,rectsByLayer);
+                bool ok = attemptSwitchRouting(rpair, iter, 0, planeRoots, bloatedRoots, rectsByLayer);
                 if (ok) return true;
 
             }
             if (excessive_m && try_switch && routePlane == 2) {
                 cout << "Route found but cost " << totalCost << " >> ideal " << ideal
                     << " ; shoudld do switch routing for net " << rpair.net << "\n";
-                bool ok = attemptSwitchRoutingMetal(rpair,iter,planeRoots,bloatedRoots,rectsByLayer);
+                bool ok = attemptSwitchRouting(rpair, iter, 2, planeRoots, bloatedRoots, rectsByLayer);
                 if (ok) return true;
 
             }
